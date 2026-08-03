@@ -1,0 +1,8 @@
+name: flutter_knowledge_parser
+description: Dart analyzer helper for Flutter Knowledge MCP
+version: 0.1.0
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+dependencies:
+  analyzer: ^7.3.0
+  path: ^1.9.0

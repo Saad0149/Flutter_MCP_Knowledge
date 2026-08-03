@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "flutter-knowledge": {
+      "command": "node",
+      "args": ["/ABSOLUTE/PATH/TO/flutter-knowledge-mcp/dist/index.js"],
+      "env": {
+        "FLUTTER_KNOWLEDGE_CONFIG": "/ABSOLUTE/PATH/TO/flutter-knowledge-mcp/config.json"
+      }
+    }
+  }
+}

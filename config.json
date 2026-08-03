@@ -1,0 +1,5 @@
+{
+  "repositoriesRoot": "./repos",
+  "indexPath": "./data/knowledge.sqlite",
+  "indexOnUpdate": true
+}

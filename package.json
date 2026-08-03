@@ -1,0 +1,56 @@
+{
+  "name": "flutter-knowledge-mcp",
+  "version": "1.0.0",
+  "description": "Flutter Analysis Engine exposed via MCP — insightful static analysis for Flutter/Dart projects",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "flutter-knowledge-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "mcp",
+    "flutter",
+    "dart",
+    "cursor"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "better-sqlite3": "^13.0.2",
+    "fast-glob": "^3.3.3",
+    "reflect-metadata": "^0.2.2",
+    "simple-git": "^3.36.0",
+    "tsyringe": "^4.10.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^22.19.3",
+    "eslint": "^9.39.2",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.7.4",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.50.0",
+    "vitest": "^3.2.4"
+  },
+  "allowScripts": {
+    "better-sqlite3@13.0.2": true
+  }
+}
