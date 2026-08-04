@@ -10,6 +10,11 @@ export const ConfigSchema = z.object({
     .min(1, 'indexPath must be a non-empty string')
     .default('./data/knowledge.sqlite'),
   indexOnUpdate: z.boolean().default(true),
+  dartSdkPath: z
+    .string()
+    .min(1, 'dartSdkPath must be a non-empty string')
+    .optional()
+    .describe('Explicit path to the `dart` executable, checked before any auto-detection'),
 });
 
 export type AppConfig = z.infer<typeof ConfigSchema>;

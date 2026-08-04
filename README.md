@@ -61,11 +61,12 @@ Configuration (`config.json`):
 {
   "repositoriesRoot": "./repos",
   "indexPath": "./data/knowledge.sqlite",
-  "indexOnUpdate": true
+  "indexOnUpdate": true,
+  "dartSdkPath": "/Users/you/Documents/flutter/bin/dart"
 }
 ```
 
-Paths resolve relative to the config file. Override with:
+`dartSdkPath` is optional and only needed if Dart detection fails (see [Troubleshooting](#troubleshooting)). When set, it's checked before any auto-detection. Paths resolve relative to the config file. Override with:
 
 ```bash
 export FLUTTER_KNOWLEDGE_CONFIG=/absolute/path/to/config.json
@@ -90,7 +91,7 @@ export FLUTTER_KNOWLEDGE_CONFIG=/absolute/path/to/config.json
 
 | Tool | Description |
 | --- | --- |
-| `update_repositories` | Clone/pull all repos; reindexes when `indexOnUpdate` is true |
+| `update_repositories` | Start background shallow clones / pulls for all repos; returns immediately with per-repo status — poll `repository_status` to observe progress |
 | `repository_status` | Existence, branch, commit, last pull, path |
 | `reindex` | Build/refresh SQLite index (`force` optional) |
 
@@ -132,6 +133,14 @@ export FLUTTER_KNOWLEDGE_CONFIG=/absolute/path/to/config.json
 
 Full reports are stored under `data/analysis-sessions/`. Follow-up tools read the cache.
 
+### Diagnostics
+
+| Tool | Purpose |
+| --- | --- |
+| `check_environment` | One-call self-diagnostic: Dart detection (found? via which method? at what path?), Node version, SQLite native binding health, and knowledge-base repo readiness |
+
+Call this whenever `review_project` reports degraded/heuristic analysis, or whenever something that "should just work" doesn't — see [Troubleshooting](#troubleshooting).
+
 ### Confidence model
 
 Every finding includes `confidence` (0–1) and `source` (`dart_analyzer` | `heuristic` | `filesystem` | `pubspec` | `import_graph`).
@@ -143,6 +152,7 @@ Every finding includes `confidence` (0–1) and `source` (`dart_analyzer` | `heu
 - Coverage (`full` / `partial` / `none`)
 - Aggregate confidence
 - Recommendation to install Dart SDK when falling back
+- A prominent `fidelityNotice` field (not a footnote) whenever `astSource="heuristic"` or coverage isn't `full`, pointing at `check_environment` for a diagnosis
 
 Each category score includes **positive/negative contributors**, weight, and confidence. Findings carry structured `evidenceItems`, related finding codes, and knowledge-resolved official references when the index has matches.
 
@@ -152,7 +162,7 @@ Engines live under `src/analysis/` (ast / engines / insight / metrics / rules / 
 
 Typical first-run flow:
 
-1. `update_repositories` (large first clone — includes engine)
+1. `update_repositories` — dispatches background shallow clones (depth 1) for all repos; returns immediately. Poll `repository_status` until `cloneInProgress` is false, then call `reindex`.
 2. Wait for index (or call `reindex`)
 3. `review_project` → then session-scoped `analyze_*` / `explore_finding` / `find_intended_behavior`
 
@@ -192,11 +202,42 @@ npm run dev
 
 Tools return structured JSON failures (never raw exceptions), including:
 
-`RepositoryNotFound`, `RepositoryMissing`, `GitError`, `SearchFailed`, `InvalidArguments`, `ConfigError`, `IndexError`, `AnalyzerUnavailable`, `ProjectNotFound`, `InternalError`.
+`RepositoryNotFound`, `RepositoryMissing`, `GitError`, `SearchFailed`, `InvalidArguments`, `ConfigError`, `IndexError`, `AnalyzerUnavailable`, `ProjectNotFound`, `NativeBindingError`, `InternalError`.
 
 ## Logging
 
 Structured JSON on **stderr** (`info` / `warning` / `error`). stdout is MCP-only.
+
+## Troubleshooting
+
+Run `check_environment` first — it's a single tool call (any MCP client, or ask your AI agent to call it) that reports pass/fail for the two things known to silently degrade this server, plus repo readiness. No need to read logs or guess from an unexplained confidence percentage.
+
+It reports:
+
+- **Dart**: whether it was found, via which method (`config_override` / `known_location` / `path_lookup` / `not_found`), and the resolved path
+- **Node**: the exact Node version, platform, and arch this server process is running under
+- **SQLite**: whether the `better-sqlite3` native binding loaded and is responding to a live query
+- **Repositories**: how many of the knowledge-base repos are cloned, and which (if any) are missing
+
+### Dart not found (analysis running in heuristic mode)
+
+`review_project` will show `astSource: "heuristic"` and a prominent `fidelityNotice`. `check_environment` will show `dart.found: false` (or `found: true` with `versionCheckPassed: false`, meaning a binary exists at that path but couldn't run — usually a permissions or architecture mismatch).
+
+This server does **not** rely solely on inherited PATH — it checks, in order: an explicit `dartSdkPath` in `config.json`, then common install locations (`/usr/local/bin/dart`, `/opt/homebrew/bin/dart`, `~/Documents/flutter/bin/dart`, `~/flutter/bin/dart`, `~/fvm/versions/*/bin/dart`, Windows equivalents), then PATH. If none of those find it:
+
+1. Confirm Dart actually works in a normal terminal: `dart --version`.
+2. Find its real path: `which dart` (macOS/Linux) or `where dart` (Windows).
+3. Set that exact path as `dartSdkPath` in `config.json` and restart the server — this bypasses PATH entirely, which matters because MCP clients (Cursor, Claude Code, etc.) don't reliably forward a shell-equivalent PATH to spawned servers, and even explicit `PATH=` entries in a client's env config are often passed through literally (no `~` or `$PATH` expansion), so a config value like `PATH=~/flutter/bin:$PATH` silently resolves to nothing useful.
+
+### SQLite native binding failed
+
+`check_environment` will show `sqlite.ok: false` with the underlying error. This almost always means `better-sqlite3`'s native binary doesn't match the Node version/OS/architecture actually running the server (e.g. installed under one Node version, run under another; or copied between machines).
+
+Fix: run `npm rebuild better-sqlite3` (or delete `node_modules` and `npm install` again) in the server's directory, then restart it.
+
+### Repositories missing
+
+`check_environment` lists them by name under `repositories.missing`. Call `update_repositories`, poll `repository_status` until `cloneInProgress` is false, then `reindex`.
 
 ## Roadmap (later)
 

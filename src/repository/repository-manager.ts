@@ -7,6 +7,7 @@ import type { Logger } from '../types/logger.js';
 import { TYPES } from '../types/tokens.js';
 import { AppError } from '../utils/errors.js';
 import type {
+  QueuedRepoStatus,
   RepositoryDefinition,
   RepositoryManager,
   RepositoryStatus,
@@ -18,8 +19,14 @@ interface MetadataFile {
   readonly lastPull: string | null;
 }
 
+/** Maximum simultaneous git clone/pull operations. */
+const CLONE_CONCURRENCY = 3;
+
 @injectable()
 export class GitRepositoryManager implements RepositoryManager {
+  /** Names of repos whose clone/pull is currently running in the background. */
+  private readonly inProgressSet = new Set<string>();
+
   constructor(
     @inject(TYPES.Config) private readonly config: AppConfig,
     @inject(TYPES.Logger) private readonly logger: Logger,
@@ -55,39 +62,79 @@ export class GitRepositoryManager implements RepositoryManager {
     await mkdir(this.config.repositoriesRoot, { recursive: true });
   }
 
+  /**
+   * Blocking update of all repos with bounded concurrency.
+   * Preserves per-repo failure isolation — one failure does not abort others.
+   */
   async updateAll(): Promise<UpdateResult[]> {
     await this.ensureRoot();
     const results: UpdateResult[] = [];
+    const queue = [...this.definitions];
 
-    for (const definition of this.definitions) {
-      try {
-        results.push(await this.updateRepository(definition));
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        const code = error instanceof AppError ? error.code : 'GitError';
+    const workers = Array.from(
+      { length: Math.min(CLONE_CONCURRENCY, queue.length || 1) },
+      async () => {
+        for (;;) {
+          const def = queue.shift();
+          if (!def) break;
+          try {
+            results.push(await this.updateRepository(def));
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            const code = error instanceof AppError ? error.code : 'GitError';
 
-        this.logger.error('Failed to update repository', {
-          repository: definition.name,
-          error: message,
-        });
+            this.logger.error('Failed to update repository', {
+              repository: def.name,
+              error: message,
+            });
 
-        results.push({
-          name: definition.name,
-          branch: null,
-          commit: null,
-          status: 'error',
-          path: this.getRepositoryPath(definition.name),
-          error: { code, message },
-        });
-      }
-    }
+            results.push({
+              name: def.name,
+              branch: null,
+              commit: null,
+              status: 'error',
+              path: this.getRepositoryPath(def.name),
+              error: { code, message },
+            });
+          }
+        }
+      },
+    );
 
+    await Promise.all(workers);
     return results;
   }
 
   async updateOne(name: string): Promise<UpdateResult> {
     await this.ensureRoot();
     return this.updateRepository(this.resolveDefinition(name));
+  }
+
+  /**
+   * Non-blocking: enqueues clone/pull work for all repos and returns immediately.
+   * Repos already mid-clone are reported as 'in_progress' and not started again.
+   * Call repository_status to observe progress.
+   */
+  startBackgroundUpdate(): QueuedRepoStatus[] {
+    const statuses: QueuedRepoStatus[] = [];
+    const toStart: RepositoryDefinition[] = [];
+
+    for (const def of this.definitions) {
+      const repoPath = this.getRepositoryPath(def.name);
+      if (this.inProgressSet.has(def.name)) {
+        statuses.push({ name: def.name, status: 'in_progress', path: repoPath });
+      } else {
+        this.inProgressSet.add(def.name);
+        toStart.push(def);
+        statuses.push({ name: def.name, status: 'queued', path: repoPath });
+      }
+    }
+
+    if (toStart.length > 0) {
+      void this.runBounded(toStart);
+    }
+
+    return statuses;
   }
 
   async getStatus(name?: string): Promise<RepositoryStatus[]> {
@@ -101,6 +148,41 @@ export class GitRepositoryManager implements RepositoryManager {
     }
 
     return statuses;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Worker-pool executor: runs up to CLONE_CONCURRENCY tasks simultaneously.
+   * Used by startBackgroundUpdate; removes each repo from inProgressSet when done.
+   */
+  private async runBounded(definitions: RepositoryDefinition[]): Promise<void> {
+    await this.ensureRoot();
+    const queue = [...definitions];
+
+    const workers = Array.from(
+      { length: Math.min(CLONE_CONCURRENCY, queue.length) },
+      async () => {
+        for (;;) {
+          const def = queue.shift();
+          if (!def) break;
+          try {
+            await this.updateRepository(def);
+          } catch (error) {
+            this.logger.error('Background update failed', {
+              repository: def.name,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          } finally {
+            this.inProgressSet.delete(def.name);
+          }
+        }
+      },
+    );
+
+    await Promise.all(workers);
   }
 
   private async updateRepository(definition: RepositoryDefinition): Promise<UpdateResult> {
@@ -159,6 +241,8 @@ export class GitRepositoryManager implements RepositoryManager {
     await mkdir(path.dirname(repoPath), { recursive: true });
     const git = simpleGit();
     await git.clone(definition.cloneUrl, repoPath, [
+      '--depth',
+      '1',
       '--branch',
       definition.defaultBranch,
       '--single-branch',
@@ -181,6 +265,7 @@ export class GitRepositoryManager implements RepositoryManager {
   private async readStatus(definition: RepositoryDefinition): Promise<RepositoryStatus> {
     const repoPath = this.getRepositoryPath(definition.name);
     const exists = await this.pathExists(repoPath);
+    const cloneInProgress = this.inProgressSet.has(definition.name);
 
     if (!exists) {
       return {
@@ -190,6 +275,7 @@ export class GitRepositoryManager implements RepositoryManager {
         branch: null,
         commit: null,
         lastPull: null,
+        cloneInProgress,
       };
     }
 
@@ -203,6 +289,7 @@ export class GitRepositoryManager implements RepositoryManager {
       branch: await this.safeCurrentBranch(git),
       commit: await this.safeCommit(git),
       lastPull: metadata.lastPull,
+      cloneInProgress,
     };
   }
 

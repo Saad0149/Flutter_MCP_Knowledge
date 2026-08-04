@@ -83,6 +83,8 @@ import {
   AnalyzeAccessibilityInputObjectSchema,
   AnalyzeAccessibilityInputSchema,
 } from './analyze-accessibility.js';
+import type { CheckEnvironmentHandler } from './check-environment.js';
+import { CheckEnvironmentInputSchema } from './check-environment.js';
 
 /**
  * Registers Phase 1–4 MCP tools plus analysis engines on the server.
@@ -136,12 +138,15 @@ export function registerTools(server: McpServer, container: DependencyContainer)
   const analyzeAccessibility = container.resolve<AnalyzeAccessibilityHandler>(
     TYPES.AnalyzeAccessibilityHandler,
   );
+  const checkEnvironment = container.resolve<CheckEnvironmentHandler>(
+    TYPES.CheckEnvironmentHandler,
+  );
 
   server.tool(
     'update_repositories',
-    'Clone missing official Flutter/Dart repositories, pull latest changes, and optionally reindex.',
+    'Start background shallow clones / pulls for all official Flutter/Dart repos. Returns immediately with per-repo status (queued / in_progress). Poll repository_status to observe progress; call reindex separately when clones finish.',
     {},
-    async () => toMcpContent(await updateRepositories.execute()),
+    () => toMcpContent(updateRepositories.execute()),
   );
 
   server.tool(
@@ -393,6 +398,13 @@ export function registerTools(server: McpServer, container: DependencyContainer)
     },
     async (args) => toMcpContent(await analyzeAccessibility.execute(args)),
   );
+
+  server.tool(
+    'check_environment',
+    'Self-diagnostic: reports whether Dart was found (and via which method/path), Node version, whether the SQLite native binding loaded, and knowledge-base repo readiness. Call this whenever analysis looks degraded or heuristic-only.',
+    {},
+    async () => toMcpContent(await checkEnvironment.execute()),
+  );
 }
 
 export const ToolSchemas = {
@@ -420,4 +432,5 @@ export const ToolSchemas = {
   analyze_dependencies: AnalyzeDependenciesInputSchema,
   analyze_performance: AnalyzePerformanceInputSchema,
   analyze_accessibility: AnalyzeAccessibilityInputSchema,
+  check_environment: CheckEnvironmentInputSchema,
 } as const;

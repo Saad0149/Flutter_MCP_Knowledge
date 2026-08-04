@@ -8,6 +8,7 @@ export type ErrorCode =
   | 'IndexError'
   | 'AnalyzerUnavailable'
   | 'ProjectNotFound'
+  | 'NativeBindingError'
   | 'InternalError';
 
 export class AppError extends Error {

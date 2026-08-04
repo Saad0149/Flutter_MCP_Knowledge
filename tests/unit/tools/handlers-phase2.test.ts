@@ -12,7 +12,6 @@ import { ReindexHandler } from '../../../src/tools/reindex.js';
 import { createSqliteKnowledgeStore } from '../../../src/store/sqlite-store.js';
 import type { SearchService } from '../../../src/search/search-service.js';
 import type { RepositoryManager } from '../../../src/repository/types.js';
-import type { Indexer } from '../../../src/indexer/repository-indexer.js';
 import { AppError } from '../../../src/utils/errors.js';
 import { createTempDir, removeTempDir } from '../../helpers/git-fixtures.js';
 import { SilentLogger } from '../../helpers/silent-logger.js';
@@ -159,45 +158,23 @@ describe('Phase 2/3 tool handlers', () => {
     store.close();
   });
 
-  it('update_repositories can reindex after update', async () => {
+  it('update_repositories returns queued status immediately (non-blocking)', () => {
     const repositories = {
-      updateAll: vi.fn().mockResolvedValue([
-        {
-          name: 'flutter/flutter',
-          branch: 'master',
-          commit: 'abc',
-          status: 'updated',
-          path: '/repos/flutter',
-        },
+      startBackgroundUpdate: vi.fn().mockReturnValue([
+        { name: 'flutter/flutter', status: 'queued', path: '/repos/flutter' },
+        { name: 'flutter/packages', status: 'in_progress', path: '/repos/packages' },
       ]),
     } as unknown as RepositoryManager;
 
-    const indexer = {
-      indexRepository: vi.fn().mockResolvedValue({
-        repository: 'flutter/flutter',
-        status: 'indexed',
-        filesScanned: 1,
-        filesUpdated: 1,
-        filesRemoved: 0,
-        symbolsIndexed: 1,
-        docsIndexed: 0,
-        durationMs: 5,
-      }),
-      indexAll: vi.fn(),
-    } as unknown as Indexer;
+    const handler = new UpdateRepositoriesHandler(repositories, new SilentLogger());
 
-    const handler = new UpdateRepositoriesHandler(
-      repositories,
-      indexer,
-      { repositoriesRoot: '/repos', indexPath: '/data/k.sqlite', indexOnUpdate: true },
-      new SilentLogger(),
-    );
-
-    const result = await handler.execute();
+    const result = handler.execute();
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.index?.ran).toBe(true);
-      expect(result.data.index?.repositories[0]?.status).toBe('indexed');
+      expect(result.data.repositories).toHaveLength(2);
+      expect(result.data.repositories[0]?.status).toBe('queued');
+      expect(result.data.repositories[1]?.status).toBe('in_progress');
+      expect(result.data.note).toMatch(/repository_status/);
     }
   });
 
@@ -257,16 +234,16 @@ describe('Phase 2/3 tool handlers', () => {
     store.close();
   });
 
-  it('update_repositories returns structured errors', async () => {
+  it('update_repositories returns structured errors when startBackgroundUpdate throws', () => {
     const handler = new UpdateRepositoriesHandler(
       {
-        updateAll: vi.fn().mockRejectedValue(new AppError('GitError', 'pull failed')),
+        startBackgroundUpdate: vi.fn().mockImplementation(() => {
+          throw new AppError('GitError', 'dispatch failed');
+        }),
       } as unknown as RepositoryManager,
-      { indexAll: vi.fn(), indexRepository: vi.fn() } as unknown as Indexer,
-      { repositoriesRoot: '/r', indexPath: '/i', indexOnUpdate: false },
       new SilentLogger(),
     );
-    const result = await handler.execute();
+    const result = handler.execute();
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.error.code).toBe('GitError');

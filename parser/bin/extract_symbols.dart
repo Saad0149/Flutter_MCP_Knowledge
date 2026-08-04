@@ -16,11 +16,23 @@ import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:analyzer/source/line_info.dart';
 import 'package:path/path.dart' as p;
 
+/// Printed immediately before our JSON payload so the Node side can locate it
+/// even if `dart run` itself prints preamble noise to stdout ahead of us
+/// (e.g. "Running build hooks..." from the native-assets/hooks feature on
+/// some Dart SDK versions — a known SDK wart, not something this script can
+/// control). Must stay in sync with `JSON_MARKER` in dart-analyzer-client.ts.
+const jsonMarker = '@@FLUTTER_KNOWLEDGE_JSON@@';
+
+void _writeJson(Object payload) {
+  stdout.writeln(jsonMarker);
+  stdout.writeln(jsonEncode(payload));
+}
+
 Future<void> main() async {
   try {
     final input = await stdin.transform(utf8.decoder).join();
     if (input.trim().isEmpty) {
-      stdout.writeln(jsonEncode({'files': <Object>[]}));
+      _writeJson({'files': <Object>[]});
       return;
     }
 
@@ -61,10 +73,10 @@ Future<void> main() async {
       });
     }
 
-    stdout.writeln(jsonEncode({'files': results}));
+    _writeJson({'files': results});
   } catch (e, st) {
     stderr.writeln('$e\n$st');
-    stdout.writeln(jsonEncode({'error': e.toString(), 'files': <Object>[]}));
+    _writeJson({'error': e.toString(), 'files': <Object>[]});
     exitCode = 1;
   }
 }

@@ -1,68 +1,39 @@
 import { inject, injectable } from 'tsyringe';
-import type { AppConfig } from '../config/schema.js';
-import type { Indexer, RepositoryIndexResult } from '../indexer/repository-indexer.js';
-import type { RepositoryManager, UpdateResult } from '../repository/types.js';
+import type { QueuedRepoStatus, RepositoryManager } from '../repository/types.js';
 import type { Logger } from '../types/logger.js';
 import { TYPES } from '../types/tokens.js';
 import { toolFail, toolOk, type ToolResult } from './tool-result.js';
 
 export interface UpdateRepositoriesData {
-  readonly repositories: readonly UpdateResult[];
-  readonly index?: {
-    readonly ran: boolean;
-    readonly repositories: readonly RepositoryIndexResult[];
-  };
+  /**
+   * Per-repo dispatch status. 'queued' = clone/pull just started in the
+   * background. 'in_progress' = a clone/pull was already running; skipped.
+   * Poll repository_status to observe completion.
+   */
+  readonly repositories: readonly QueuedRepoStatus[];
+  readonly note: string;
 }
 
 @injectable()
 export class UpdateRepositoriesHandler {
   constructor(
     @inject(TYPES.RepositoryManager) private readonly repositories: RepositoryManager,
-    @inject(TYPES.Indexer) private readonly indexer: Indexer,
-    @inject(TYPES.Config) private readonly config: AppConfig,
     @inject(TYPES.Logger) private readonly logger: Logger,
   ) {}
 
-  async execute(): Promise<ToolResult<UpdateRepositoriesData>> {
+  execute(): ToolResult<UpdateRepositoriesData> {
     try {
-      const results = await this.repositories.updateAll();
+      const queued = this.repositories.startBackgroundUpdate();
 
-      if (!this.config.indexOnUpdate) {
-        return toolOk({ repositories: results, index: { ran: false, repositories: [] } });
-      }
-
-      const indexResults: RepositoryIndexResult[] = [];
-      for (const result of results) {
-        if (result.status === 'error') {
-          continue;
-        }
-        try {
-          indexResults.push(await this.indexer.indexRepository(result.name));
-        } catch (error) {
-          this.logger.error('Post-update index failed', {
-            repository: result.name,
-            error: error instanceof Error ? error.message : error,
-          });
-          indexResults.push({
-            repository: result.name,
-            status: 'error',
-            filesScanned: 0,
-            filesUpdated: 0,
-            filesRemoved: 0,
-            symbolsIndexed: 0,
-            docsIndexed: 0,
-            durationMs: 0,
-            error: {
-              code: 'IndexError',
-              message: error instanceof Error ? error.message : String(error),
-            },
-          });
-        }
-      }
+      this.logger.info('Background repository update dispatched', {
+        total: queued.length,
+        queued: queued.filter((r) => r.status === 'queued').length,
+        inProgress: queued.filter((r) => r.status === 'in_progress').length,
+      });
 
       return toolOk({
-        repositories: results,
-        index: { ran: true, repositories: indexResults },
+        repositories: queued,
+        note: 'Clone/pull started in background. Call repository_status to observe progress. Indexing is not triggered automatically — call reindex after clones complete.',
       });
     } catch (error) {
       return toolFail(error);

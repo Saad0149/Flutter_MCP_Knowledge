@@ -30,6 +30,11 @@ export interface ReviewProjectSummary {
   readonly confidence: number;
   readonly astSource: string;
   readonly coverage: string;
+  /**
+   * Present and prominent (not buried) whenever analysis ran in degraded/heuristic
+   * mode, so callers can't miss that findings have reduced confidence.
+   */
+  readonly fidelityNotice?: string;
   readonly overview: string;
   readonly topRisks: readonly string[];
   readonly topStrengths: readonly string[];
@@ -81,6 +86,9 @@ export function buildReviewSummary(
   report: Omit<ProjectAnalysisReport, 'snapshot'>,
 ): ReviewProjectSummary {
   const cards = report.findings.map(toFindingCard);
+  const isDegraded =
+    report.analysisSummary.astSource === 'heuristic' || report.analysisSummary.coverage !== 'full';
+
   return {
     sessionId,
     projectPath: report.projectPath,
@@ -88,6 +96,14 @@ export function buildReviewSummary(
     confidence: report.analysisSummary.confidence,
     astSource: report.analysisSummary.astSource,
     coverage: report.analysisSummary.coverage,
+    fidelityNotice: isDegraded
+      ? `Analysis fidelity is reduced (astSource="${report.analysisSummary.astSource}", coverage="${report.analysisSummary.coverage}"). ` +
+        `Findings and scores reflect heuristic (regex-based) extraction, not the full Dart AST. ` +
+        (report.analysisSummary.warning
+          ? `Reason: ${report.analysisSummary.warning} `
+          : '') +
+        `Call check_environment to see why the Dart analyzer wasn't used and how to fix it.`
+      : undefined,
     overview: report.insight.overview,
     topRisks: report.healthReport.topRisks.slice(0, 5),
     topStrengths: report.healthReport.topStrengths.slice(0, 5),

@@ -45,6 +45,10 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
     repositoriesRoot: resolvePath(configDir, result.data.repositoriesRoot),
     indexPath: resolvePath(configDir, result.data.indexPath),
     indexOnUpdate: result.data.indexOnUpdate,
+    dartSdkPath:
+      result.data.dartSdkPath !== undefined
+        ? resolvePath(configDir, result.data.dartSdkPath)
+        : undefined,
   };
 }
 

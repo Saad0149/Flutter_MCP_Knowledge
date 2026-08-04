@@ -9,7 +9,7 @@ export interface RepositoryDefinition {
   readonly defaultBranch: string;
 }
 
-export type UpdateOutcome = 'cloned' | 'updated' | 'already_up_to_date' | 'error';
+export type UpdateOutcome = 'cloned' | 'updated' | 'already_up_to_date' | 'error' | 'in_progress';
 
 export interface RepositoryStatus {
   readonly name: string;
@@ -18,6 +18,16 @@ export interface RepositoryStatus {
   readonly branch: string | null;
   readonly commit: string | null;
   readonly lastPull: string | null;
+  /** True while a background clone/pull is running for this repo. */
+  readonly cloneInProgress?: boolean;
+}
+
+/** Per-repo result returned immediately by startBackgroundUpdate. */
+export interface QueuedRepoStatus {
+  readonly name: string;
+  /** 'queued' = just started; 'in_progress' = was already running. */
+  readonly status: 'queued' | 'in_progress';
+  readonly path: string;
 }
 
 export interface UpdateResult {
@@ -34,8 +44,15 @@ export interface UpdateResult {
 
 export interface RepositoryManager {
   ensureRoot(): Promise<void>;
+  /** Blocking update of all repos (bounded concurrency). Used by tests / manual callers. */
   updateAll(): Promise<UpdateResult[]>;
   updateOne(name: string): Promise<UpdateResult>;
+  /**
+   * Non-blocking: fires clone/pull work in the background and returns immediately.
+   * If a repo is already mid-clone, it is skipped (reported as 'in_progress').
+   * Poll repository_status to observe completion.
+   */
+  startBackgroundUpdate(): QueuedRepoStatus[];
   getStatus(name?: string): Promise<RepositoryStatus[]>;
   getRepositoryPath(name: string): string;
   listDefinitions(): readonly RepositoryDefinition[];

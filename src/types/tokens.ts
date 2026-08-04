@@ -65,4 +65,5 @@ export const TYPES = {
   AnalyzeDependenciesHandler: Symbol.for('AnalyzeDependenciesHandler'),
   AnalyzePerformanceHandler: Symbol.for('AnalyzePerformanceHandler'),
   AnalyzeAccessibilityHandler: Symbol.for('AnalyzeAccessibilityHandler'),
+  CheckEnvironmentHandler: Symbol.for('CheckEnvironmentHandler'),
 } as const;

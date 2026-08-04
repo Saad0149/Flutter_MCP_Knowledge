@@ -59,5 +59,6 @@ export {
   AnalyzeAccessibilityHandler,
   AnalyzeAccessibilityInputSchema,
 } from './analyze-accessibility.js';
+export { CheckEnvironmentHandler, CheckEnvironmentInputSchema } from './check-environment.js';
 export { toMcpContent, toolFail, toolOk } from './tool-result.js';
 export type { ToolResult } from './tool-result.js';

@@ -1,7 +1,9 @@
 import { mkdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
-import Database from 'better-sqlite3';
+import type Database from 'better-sqlite3';
 import { injectable } from 'tsyringe';
+import { AppError } from '../utils/errors.js';
 import type {
   DocKind,
   DocSearchHit,
@@ -18,6 +20,48 @@ import type {
 
 export const SCHEMA_VERSION = 2;
 
+// Loaded lazily (not via a static `import`) so a native binding failure surfaces as a
+// catchable error inside open() instead of crashing module evaluation before any
+// try/catch in the process can run.
+const require = createRequire(import.meta.url);
+
+/**
+ * Signatures that better-sqlite3's underlying loader (node-gyp-build) is known to throw
+ * when the prebuilt native binary doesn't match the running Node/platform/arch — the
+ * classic "installed on one machine, run on another" ABI mismatch.
+ */
+const NATIVE_BINDING_ERROR_SIGNATURES = [
+  'NODE_MODULE_VERSION',
+  'was compiled against a different version',
+  'invalid ELF header',
+  'not a valid Win32 application',
+  'incompatible architecture',
+  'no native build was found',
+  'wrong ELF class',
+];
+
+function isLikelyNativeBindingError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return NATIVE_BINDING_ERROR_SIGNATURES.some((signature) =>
+    message.toLowerCase().includes(signature.toLowerCase()),
+  );
+}
+
+function wrapNativeBindingError(error: unknown, stage: 'load' | 'open'): AppError {
+  const original = error instanceof Error ? error.message : String(error);
+  const likelyAbiMismatch = isLikelyNativeBindingError(error);
+
+  const message = likelyAbiMismatch
+    ? `Failed to ${stage === 'load' ? 'load' : 'open'} the better-sqlite3 native binding: it appears to be built for a ` +
+      `different Node.js version, OS, or CPU architecture than the one currently running. ` +
+      `Run "npm rebuild better-sqlite3" (or delete node_modules and reinstall) to fetch/rebuild ` +
+      `a matching native binary before retrying.`
+    : `Failed to ${stage === 'load' ? 'load' : 'open'} the better-sqlite3 native binding: ${original}. ` +
+      `If this persists after a normal restart, try "npm rebuild better-sqlite3".`;
+
+  return new AppError('NativeBindingError', message, { originalError: original, likelyAbiMismatch });
+}
+
 @injectable()
 export class SqliteKnowledgeStore implements KnowledgeStore {
   private db: Database.Database | null = null;
@@ -29,8 +73,22 @@ export class SqliteKnowledgeStore implements KnowledgeStore {
       return;
     }
 
+    let DatabaseCtor: typeof Database;
+    try {
+      DatabaseCtor = require('better-sqlite3') as typeof Database;
+    } catch (error) {
+      throw wrapNativeBindingError(error, 'load');
+    }
+
     mkdirSync(path.dirname(this.dbPath), { recursive: true });
-    this.db = new Database(this.dbPath);
+
+    try {
+      this.db = new DatabaseCtor(this.dbPath);
+    } catch (error) {
+      this.db = null;
+      throw wrapNativeBindingError(error, 'open');
+    }
+
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.migrate();

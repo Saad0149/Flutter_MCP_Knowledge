@@ -56,6 +56,7 @@ import {
   AnalyzeDependenciesHandler,
   AnalyzePerformanceHandler,
   AnalyzeAccessibilityHandler,
+  CheckEnvironmentHandler,
   ExplainFindingHandler,
   ExplainWidgetHandler,
   ExploreFindingHandler,
@@ -171,6 +172,7 @@ export function createContainer(options: CreateContainerOptions): DependencyCont
   child.registerSingleton(TYPES.AnalyzeDependenciesHandler, AnalyzeDependenciesHandler);
   child.registerSingleton(TYPES.AnalyzePerformanceHandler, AnalyzePerformanceHandler);
   child.registerSingleton(TYPES.AnalyzeAccessibilityHandler, AnalyzeAccessibilityHandler);
+  child.registerSingleton(TYPES.CheckEnvironmentHandler, CheckEnvironmentHandler);
 
   return child;
 }

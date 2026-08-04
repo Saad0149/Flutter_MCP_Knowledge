@@ -105,6 +105,12 @@ export interface AnalysisSummary {
   readonly coverage: AstMeta['coverage'];
   readonly confidence: number;
   readonly recommendation?: string;
+  /**
+   * The actual reason the Dart analyzer wasn't used for this run (e.g. the
+   * real spawn/exit-code error), verbatim from AstMeta — not a generic
+   * "install Dart" message. Undefined when astSource is dart_analyzer.
+   */
+  readonly warning?: string;
   readonly findingCount: number;
   readonly averageFindingConfidence: number;
 }
@@ -309,6 +315,7 @@ export function buildAnalysisSummary(
     coverage: astMeta.coverage,
     confidence: aggregate,
     recommendation,
+    warning: astMeta.source === 'heuristic' ? astMeta.warning : undefined,
     findingCount: findings.length,
     averageFindingConfidence: roundConfidence(averageFindingConfidence),
   };
