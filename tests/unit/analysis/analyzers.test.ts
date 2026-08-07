@@ -16,6 +16,8 @@ import { TestingAnalyzer } from '../../../src/analysis/engines/testing-analyzer.
 import { EvidenceEngine } from '../../../src/analysis/evidence/evidence-engine.js';
 import { ExplanationEngine } from '../../../src/analysis/insight/explanation-engine.js';
 import { IntendedBehaviourEngine } from '../../../src/analysis/insight/intended-behaviour-engine.js';
+import { KnowledgeBaseReadinessChecker } from '../../../src/repository/knowledge-base-readiness.js';
+import type { RepositoryManager } from '../../../src/repository/types.js';
 import { PriorityActionEngine } from '../../../src/analysis/insight/priority-action-engine.js';
 import { ProjectHealthScorer } from '../../../src/analysis/insight/project-health-scorer.js';
 import { ProjectReportBuilder } from '../../../src/analysis/insight/project-report-builder.js';
@@ -117,6 +119,65 @@ class _HomePageState extends State<HomePage> {
     await writeFile(
       path.join(project, 'lib', 'features', 'home', 'data', 'home_repository.dart'),
       'class HomeRepository { Future<void> load() async {} }\n',
+      'utf8',
+    );
+    return project;
+  }
+
+  /** Produces `count` files each with an oversized build() method, so a single
+   * LargeBuildMethod finding ends up with `count` evidence items — enough to
+   * exercise real maxEvidence truncation end-to-end. */
+  async function createFixtureAppWithManyLargeBuildMethods(count: number): Promise<string> {
+    tempDir = await createTempDir('analysis-large-build-');
+    const project = path.join(tempDir, 'app');
+    const libDir = path.join(project, 'lib');
+    await mkdir(libDir, { recursive: true });
+    await writeFile(
+      path.join(project, 'pubspec.yaml'),
+      `name: demo_app
+description: fixture
+version: 1.0.0
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+dependencies:
+  flutter:
+    sdk: flutter
+`,
+      'utf8',
+    );
+    const textLines = Array.from(
+      { length: 90 },
+      (_, i) => `      Text('line ${i}'),`,
+    ).join('\n');
+    for (let i = 0; i < count; i += 1) {
+      await writeFile(
+        path.join(libDir, `widget_${i}.dart`),
+        `import 'package:flutter/material.dart';
+
+class Widget${i} extends StatelessWidget {
+  const Widget${i}({super.key});
+  @override
+  Widget build(BuildContext context) {
+    return Column(children: [
+${textLines}
+    ]);
+  }
+}
+`,
+        'utf8',
+      );
+    }
+    return project;
+  }
+
+  /** A project directory with zero Dart files — for the fail-fast/blocked-session tests. */
+  async function createEmptyFixtureApp(): Promise<string> {
+    tempDir = await createTempDir('analysis-empty-');
+    const project = path.join(tempDir, 'app');
+    await mkdir(project, { recursive: true });
+    await writeFile(
+      path.join(project, 'README.md'),
+      '# Not a Flutter project\n\nJust some docs, no lib/ or .dart files.\n',
       'utf8',
     );
     return project;
@@ -329,7 +390,7 @@ class _HomePageState extends State<HomePage> {
     expect(explained.success).toBe(true);
     if (explained.success) {
       expect(explained.data.fromCache).toBe(true);
-      expect(explained.data.explanation.whyThisMatters.length).toBeGreaterThan(20);
+      expect(explained.data.whyThisMatters!.length).toBeGreaterThan(20);
     }
 
     const explored = await new ExploreFindingHandler(sessions, recommendations).execute({
@@ -353,10 +414,12 @@ class _HomePageState extends State<HomePage> {
     const result = await handler.execute({ path: project, findingCode: 'PresentationImportsData' });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.explanation.whyThisMatters.length).toBeGreaterThan(20);
-      expect(result.data.explanation.suggestedArchitecture.length).toBeGreaterThan(20);
-      expect(result.data.explanation.potentialTradeoffs.length).toBeGreaterThan(0);
-      expect(result.data.recommendation.problem).toBeTruthy();
+      expect(result.data.whyThisMatters!.length).toBeGreaterThan(20);
+      expect(result.data.fix!.suggestedRefactor.length).toBeGreaterThan(20);
+      expect(result.data.fix!.potentialTradeoffs.length).toBeGreaterThan(0);
+      expect(result.data.summary).toBeTruthy();
+      // Single evidence array — no more duplication across explanation/recommendation.
+      expect(result.data.evidence).toBeDefined();
     }
     store.close();
   });
@@ -377,21 +440,532 @@ class _HomePageState extends State<HomePage> {
     store.close();
   });
 
-  it('find_intended_behavior cascades all sources before empty', async () => {
+  it('explain_finding default (no params) has no evidence duplication and matches prior content', async () => {
+    const project = await createFixtureApp();
+    const { store, sessions, explanation } = buildStack(path.join(tempDir!, 'k.sqlite'));
+    const result = await new ExplainFindingHandler(sessions, explanation).execute({
+      path: project,
+      findingCode: 'PresentationImportsData',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const json = JSON.stringify(result.data);
+      // There must be exactly one occurrence of the evidence array in the
+      // serialized JSON — not the old explanation.evidence /
+      // recommendation.evidence / recommendation.evidenceItems triplication.
+      expect((json.match(/"evidence":/g) ?? []).length).toBe(1);
+      expect('explanation' in result.data).toBe(false);
+      expect('recommendation' in result.data).toBe(false);
+      // Content equivalent to the old response, just deduplicated + flattened.
+      expect(result.data.summary).toBeTruthy();
+      expect(result.data.whyThisMatters).toBeTruthy();
+      expect(result.data.fix?.suggestedRefactor).toBeTruthy();
+      expect(result.data.priority).toBeTruthy();
+      expect(result.data.confidence).toBeGreaterThan(0.5);
+    }
+    store.close();
+  });
+
+  it('explain_finding verbosity=brief returns only summary + fix + evidence + priority/confidence', async () => {
+    const project = await createFixtureApp();
+    const { store, sessions, explanation } = buildStack(path.join(tempDir!, 'k.sqlite'));
+    const result = await new ExplainFindingHandler(sessions, explanation).execute({
+      path: project,
+      findingCode: 'PresentationImportsData',
+      verbosity: 'brief',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const keys = Object.keys(result.data).sort();
+      expect(keys).toEqual(
+        [
+          'sessionId',
+          'fromCache',
+          'projectPath',
+          'findingCode',
+          'summary',
+          'fix',
+          'evidence',
+          'priority',
+          'confidence',
+          'bytes',
+          'approxTokens',
+        ].sort(),
+      );
+      expect(result.data.relatedFindings).toBeUndefined();
+      expect(result.data.officialReferences).toBeUndefined();
+    }
+    store.close();
+  });
+
+  it('explain_finding verbosity=full does not suppress official-reference-family fields', async () => {
+    const project = await createFixtureApp();
+    const { store, sessions, explanation } = buildStack(path.join(tempDir!, 'k.sqlite'));
+    const result = await new ExplainFindingHandler(sessions, explanation).execute({
+      path: project,
+      findingCode: 'PresentationImportsData',
+      verbosity: 'full',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // officialGuidance is always a non-empty string by design (present or
+      // "none resolved" message) — full must not suppress it via includeOfficialRefs.
+      expect(result.data.officialGuidance).toBeTruthy();
+      // brief explicitly excludes this field; full must include it.
+      expect(result.data.technicalExplanation).toBeTruthy();
+    }
+    store.close();
+  });
+
+  it('explain_finding includeRelated toggles relatedFindings, and never leaks an empty array', async () => {
+    const project = await createFixtureApp();
+    const { store, sessions, explanation } = buildStack(path.join(tempDir!, 'k.sqlite'));
+
+    const included = await new ExplainFindingHandler(sessions, explanation).execute({
+      path: project,
+      findingCode: 'PresentationImportsData',
+      verbosity: 'full',
+      includeRelated: true,
+    });
+    expect(included.success).toBe(true);
+    if (included.success) {
+      // Global cleanup rule: if there's nothing related, omit the field
+      // entirely rather than returning relatedFindings: [].
+      if (included.data.relatedFindings !== undefined) {
+        expect(included.data.relatedFindings.length).toBeGreaterThan(0);
+      }
+    }
+
+    // includeRelated=false must always suppress it, whether or not any exist.
+    const suppressed = await new ExplainFindingHandler(sessions, explanation).execute({
+      path: project,
+      findingCode: 'PresentationImportsData',
+      verbosity: 'full',
+      includeRelated: false,
+    });
+    expect(suppressed.success).toBe(true);
+    if (suppressed.success) {
+      expect(suppressed.data.relatedFindings).toBeUndefined();
+    }
+    store.close();
+  });
+
+  it('explain_finding fields allowlist overrides verbosity for field selection', async () => {
+    const project = await createFixtureApp();
+    const { store, sessions, explanation } = buildStack(path.join(tempDir!, 'k.sqlite'));
+    const result = await new ExplainFindingHandler(sessions, explanation).execute({
+      path: project,
+      findingCode: 'PresentationImportsData',
+      verbosity: 'full',
+      fields: ['summary'],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const keys = Object.keys(result.data).sort();
+      expect(keys).toEqual(
+        ['sessionId', 'fromCache', 'projectPath', 'findingCode', 'summary', 'bytes', 'approxTokens'].sort(),
+      );
+    }
+    store.close();
+  });
+
+  it('explain_finding includeOfficialRefs=false omits the entire official-reference block', async () => {
+    const project = await createFixtureApp();
+    const { store, sessions, explanation } = buildStack(path.join(tempDir!, 'k.sqlite'));
+    const result = await new ExplainFindingHandler(sessions, explanation).execute({
+      path: project,
+      findingCode: 'PresentationImportsData',
+      includeOfficialRefs: false,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.officialReferences).toBeUndefined();
+      expect(result.data.officialGuidance).toBeUndefined();
+      expect(result.data.realFlutterExamples).toBeUndefined();
+    }
+    store.close();
+  });
+
+  it('explain_finding maxEvidence truncates real multi-item evidence with an omitted count', async () => {
+    const project = await createFixtureAppWithManyLargeBuildMethods(8);
+    const { store, sessions, explanation } = buildStack(path.join(tempDir!, 'k.sqlite'));
+
+    const defaultResult = await new ExplainFindingHandler(sessions, explanation).execute({
+      path: project,
+      findingCode: 'LargeBuildMethod',
+    });
+    expect(defaultResult.success).toBe(true);
+    if (defaultResult.success) {
+      // Default maxEvidence=5, real finding has 8 evidence items.
+      expect(defaultResult.data.evidence?.length).toBe(5);
+      expect(defaultResult.data.evidenceOmittedCount).toBe(3);
+    }
+
+    const cappedResult = await new ExplainFindingHandler(sessions, explanation).execute({
+      sessionId: defaultResult.success ? defaultResult.data.sessionId : undefined,
+      findingCode: 'LargeBuildMethod',
+      maxEvidence: 3,
+    });
+    expect(cappedResult.success).toBe(true);
+    if (cappedResult.success) {
+      expect(cappedResult.data.evidence?.length).toBe(3);
+      expect(cappedResult.data.evidenceOmittedCount).toBe(5);
+    }
+
+    const uncappedResult = await new ExplainFindingHandler(sessions, explanation).execute({
+      sessionId: defaultResult.success ? defaultResult.data.sessionId : undefined,
+      findingCode: 'LargeBuildMethod',
+      maxEvidence: 100,
+    });
+    expect(uncappedResult.success).toBe(true);
+    if (uncappedResult.success) {
+      expect(uncappedResult.data.evidence?.length).toBe(8);
+      expect(uncappedResult.data.evidenceOmittedCount).toBeUndefined();
+    }
+
+    store.close();
+  });
+
+  it('explore_finding maxEvidence caps evidence independently of limit (which still caps affectedFiles)', async () => {
+    const project = await createFixtureAppWithManyLargeBuildMethods(8);
+    const { store, sessions, recommendations } = buildStack(path.join(tempDir!, 'k.sqlite'));
+
+    const result = await new ExploreFindingHandler(sessions, recommendations).execute({
+      path: project,
+      findingCode: 'LargeBuildMethod',
+      maxEvidence: 4,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.evidence?.length).toBe(4);
+      expect(result.data.evidenceOmittedCount).toBe(4);
+    }
+    store.close();
+  });
+
+  it('explore_finding verbosity=brief trims the response and omits empty fields', async () => {
+    const project = await createFixtureApp();
+    const { store, sessions, recommendations } = buildStack(path.join(tempDir!, 'k.sqlite'));
+    const result = await new ExploreFindingHandler(sessions, recommendations).execute({
+      path: project,
+      findingCode: 'PresentationImportsData',
+      verbosity: 'brief',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const keys = Object.keys(result.data).sort();
+      expect(keys).toEqual(
+        [
+          'sessionId',
+          'fromCache',
+          'projectPath',
+          'finding',
+          'evidence',
+          'suggestedRefactoring',
+          'confidence',
+          'bytes',
+          'approxTokens',
+        ].sort(),
+      );
+      // Global cleanup: no null/empty placeholders for omitted-count or officialReferences.
+      expect(result.data.evidenceOmittedCount).toBeUndefined();
+      expect(result.data.officialReferences).toBeUndefined();
+    }
+    store.close();
+  });
+
+  it('explain_finding codes[] batch returns one result per code, including a not_found entry for unknown codes', async () => {
+    const project = await createFixtureApp();
+    const { store, sessions, explanation } = buildStack(path.join(tempDir!, 'k.sqlite'));
+    const result = await new ExplainFindingHandler(sessions, explanation).execute({
+      path: project,
+      codes: ['PresentationImportsData', 'NoSuchFindingCodeXYZ'],
+    });
+    expect(result.success).toBe(true);
+    if (result.success && 'results' in result.data) {
+      expect(result.data.results.length).toBe(2);
+      const [found, missing] = result.data.results;
+      expect(found).toHaveProperty('findingCode', 'PresentationImportsData');
+      expect(found).toHaveProperty('summary');
+      expect(missing).toEqual({
+        findingCode: 'NoSuchFindingCodeXYZ',
+        status: 'not_found',
+        reason: 'unknown_code',
+        message: expect.stringContaining('NoSuchFindingCodeXYZ'),
+      });
+    } else {
+      expect.fail('expected a batch results shape');
+    }
+    store.close();
+  });
+
+  it('explore_finding codes[] batch matches the single-lookup content for the same code', async () => {
+    const project = await createFixtureApp();
+    const { store, sessions, recommendations } = buildStack(path.join(tempDir!, 'k.sqlite'));
+
+    const single = await new ExploreFindingHandler(sessions, recommendations).execute({
+      path: project,
+      findingCode: 'PresentationImportsData',
+    });
+    expect(single.success).toBe(true);
+
+    const batch = await new ExploreFindingHandler(sessions, recommendations).execute({
+      sessionId: single.success ? (single.data as { sessionId: string }).sessionId : undefined,
+      codes: ['PresentationImportsData'],
+    });
+    expect(batch.success).toBe(true);
+    if (single.success && batch.success && 'results' in batch.data) {
+      expect(batch.data.results.length).toBe(1);
+      const [item] = batch.data.results;
+      expect(item).toHaveProperty('suggestedRefactoring', (single.data as { suggestedRefactoring: string }).suggestedRefactoring);
+    } else {
+      expect.fail('expected a batch results shape');
+    }
+    store.close();
+  });
+
+  it('fail-fast: analyze_code_quality on a project with zero Dart files returns a blocked status immediately', async () => {
+    const project = await createEmptyFixtureApp();
+    const { store, sessions } = buildStack(path.join(tempDir!, 'k.sqlite'));
+    const result = await new AnalyzeCodeQualityHandler(sessions).execute({ path: project });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toMatchObject({ status: 'blocked', reason: 'no_dart_files' });
+      // Short structured response, not partial analyzer output.
+      expect('narrative' in result.data).toBe(false);
+      expect('findings' in result.data).toBe(false);
+    }
+    store.close();
+  });
+
+  it('fail-fast: review_project on a project with zero Dart files returns a blocked status, not a hollow report', async () => {
+    const project = await createEmptyFixtureApp();
+    const { store, sessions } = buildStack(path.join(tempDir!, 'k.sqlite'));
+    const result = await new ReviewProjectHandler(sessions, new SilentLogger()).execute({ path: project });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toMatchObject({ status: 'blocked', reason: 'no_dart_files' });
+      expect('overallHealth' in result.data).toBe(false);
+    }
+    store.close();
+  });
+
+  it('fail-fast: explain_finding/explore_finding for an unknown code fail immediately with reason=unknown_code (not partial work)', async () => {
+    const project = await createFixtureApp();
+    const { store, sessions, explanation, recommendations } = buildStack(path.join(tempDir!, 'k.sqlite'));
+
+    const explained = await new ExplainFindingHandler(sessions, explanation).execute({
+      path: project,
+      findingCode: 'TotallyMadeUpCode',
+    });
+    expect(explained.success).toBe(false);
+    if (!explained.success) {
+      expect(explained.error.details).toMatchObject({ reason: 'unknown_code' });
+    }
+
+    const explored = await new ExploreFindingHandler(sessions, recommendations).execute({
+      path: project,
+      findingCode: 'TotallyMadeUpCode',
+    });
+    expect(explored.success).toBe(false);
+    if (!explored.success) {
+      expect(explored.error.details).toMatchObject({ reason: 'unknown_code' });
+    }
+    store.close();
+  });
+
+  it('review_project topRisks/topActions include sampleFiles pulled from real finding evidence, never fabricated', async () => {
+    const project = await createFixtureApp();
+    const { store, sessions, reports } = buildStack(path.join(tempDir!, 'k.sqlite'));
+    const report = await reports.build(project);
+
+    const allRealEvidenceFiles = new Set<string>();
+    for (const f of report.findings) {
+      if (f.file) allRealEvidenceFiles.add(f.file);
+      for (const item of f.evidenceItems ?? []) {
+        if (item.file) allRealEvidenceFiles.add(item.file);
+      }
+    }
+
+    const result = await new ReviewProjectHandler(sessions, new SilentLogger()).execute({ path: project });
+    expect(result.success).toBe(true);
+    if (result.success && 'topRisks' in result.data) {
+      const risksWithFiles = result.data.topRisks.filter((r) => r.sampleFiles.length > 0);
+      const actionsWithFiles = result.data.topActions.filter((a) => a.sampleFiles.length > 0);
+      expect(risksWithFiles.length + actionsWithFiles.length).toBeGreaterThan(0);
+
+      for (const risk of risksWithFiles) {
+        for (const file of risk.sampleFiles) {
+          expect(allRealEvidenceFiles.has(file)).toBe(true);
+        }
+        expect(risk.sampleFiles.length).toBeLessThanOrEqual(3);
+      }
+      for (const action of actionsWithFiles) {
+        for (const file of action.sampleFiles) {
+          expect(allRealEvidenceFiles.has(file)).toBe(true);
+        }
+      }
+    } else {
+      expect.fail('expected the summary shape with topRisks');
+    }
+    store.close();
+  });
+
+  it('analyze_architecture pathGlob/feature scoping returns a strict subset of the unfiltered findings', async () => {
+    const project = await createFixtureApp();
+    const { store, sessions } = buildStack(path.join(tempDir!, 'k.sqlite'));
+
+    const unfiltered = await new AnalyzeArchitectureHandler(sessions).execute({ path: project });
+    expect(unfiltered.success).toBe(true);
+
+    const sessionId =
+      unfiltered.success && 'sessionId' in unfiltered.data ? unfiltered.data.sessionId : undefined;
+
+    const matching = await new AnalyzeArchitectureHandler(sessions).execute({
+      sessionId,
+      pathGlob: 'lib/features/home/presentation/**',
+    });
+    const nonMatching = await new AnalyzeArchitectureHandler(sessions).execute({
+      sessionId,
+      feature: 'totally-nonexistent-feature',
+    });
+
+    expect(unfiltered.success && matching.success && nonMatching.success).toBe(true);
+    if (
+      unfiltered.success &&
+      matching.success &&
+      nonMatching.success &&
+      'findings' in unfiltered.data &&
+      'findings' in matching.data &&
+      'findings' in nonMatching.data
+    ) {
+      // A non-matching scope must yield a strict subset (fewer findings) —
+      // it's a real filter, not a no-op.
+      expect(nonMatching.data.findings.length).toBeLessThan(unfiltered.data.findings.length);
+      // A scope that actually matches PresentationImportsData's evidence
+      // keeps it, and is not larger than the unfiltered set.
+      expect(matching.data.findings.length).toBeLessThanOrEqual(unfiltered.data.findings.length);
+      expect(
+        matching.data.findings.some((f) => f.code === 'PresentationImportsData'),
+      ).toBe(true);
+      expect(
+        nonMatching.data.findings.some((f) => f.code === 'PresentationImportsData'),
+      ).toBe(false);
+    } else {
+      expect.fail('expected the normal analyze_architecture shape (not blocked)');
+    }
+    store.close();
+  });
+
+  it('analyze_* responses include bytes/approxTokens size metadata', async () => {
+    const project = await createFixtureApp();
+    const { store, sessions } = buildStack(path.join(tempDir!, 'k.sqlite'));
+    const result = await new AnalyzeCodeQualityHandler(sessions).execute({ path: project });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.bytes).toBeGreaterThan(0);
+      expect(result.data.approxTokens).toBeGreaterThan(0);
+      expect(result.data.approxTokens).toBe(Math.ceil(result.data.bytes / 4));
+    }
+    store.close();
+  });
+
+  it('find_intended_behavior auto-bootstraps and returns "building" when the index is empty', async () => {
     tempDir = await createTempDir('intended-');
     const store = createSqliteKnowledgeStore(path.join(tempDir, 'k.sqlite'));
-    const engine = new IntendedBehaviourEngine(store);
+
+    const startBackgroundUpdate = vi.fn().mockReturnValue([
+      { name: 'flutter/flutter', status: 'queued' },
+    ]);
+    const repositories = {
+      getStatus: vi.fn().mockResolvedValue([]),
+      listDefinitions: () => [],
+      startBackgroundUpdate,
+    } as unknown as RepositoryManager;
+
+    const readinessChecker = new KnowledgeBaseReadinessChecker(repositories, store, new SilentLogger());
+    const engine = new IntendedBehaviourEngine(store, readinessChecker);
     const handler = new FindIntendedBehaviorHandler(engine);
     const result = await handler.execute({ topic: 'NonexistentWidgetXYZ123' });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.exhaustedAllSources).toBe(true);
-      expect(result.data.searchedSteps.length).toBeGreaterThanOrEqual(7);
-      expect(result.data.status).toBe('blocked');
+      expect(result.data.status).toBe('building');
+      expect(result.data.suggestedAction).toMatch(/repository_status/i);
+      expect(result.data.summary).toMatch(/being built in the background/i);
       expect(result.data.knowledgeBase?.available).toBe(false);
-      expect(result.data.knowledgeBase?.nextStep).toMatch(/update_repositories/i);
-      expect(result.data.summary).toMatch(/Knowledge base unavailable|not indexed/i);
     }
+    // Auto-bootstrap kicked off the same background clone update_repositories uses.
+    expect(startBackgroundUpdate).toHaveBeenCalledTimes(1);
+    store.close();
+  });
+
+  it('find_intended_behavior serves partial results and notes skipped sources when only some repos are indexed', async () => {
+    tempDir = await createTempDir('intended-partial-');
+    const store = createSqliteKnowledgeStore(path.join(tempDir, 'k.sqlite'));
+
+    const flutter = store.upsertRepository({
+      name: 'flutter/flutter',
+      path: '/repos/flutter',
+      commitHash: 'a',
+    });
+    const file = store.upsertFile({
+      repositoryId: flutter.id,
+      path: 'packages/flutter/lib/src/widgets/container.dart',
+      kind: 'dart',
+      hash: '1',
+      mtimeMs: 1,
+    });
+    store.replaceSymbolsForFile(file.id, [
+      {
+        fileId: file.id,
+        name: 'Container',
+        kind: 'class',
+        line: 10,
+        isWidget: true,
+        isWidgetTest: false,
+        docstring: 'A convenience widget.',
+        packageName: 'flutter',
+      },
+    ]);
+
+    // Only flutter/flutter is cloned; the other 5 expected sources are missing.
+    const repositories = {
+      getStatus: vi.fn().mockResolvedValue([
+        {
+          name: 'flutter/flutter',
+          exists: true,
+          path: '/repos/flutter',
+          branch: 'main',
+          commit: 'abc123',
+          lastPull: new Date().toISOString(),
+        },
+      ]),
+      listDefinitions: () => [
+        { name: 'flutter/flutter', localName: 'flutter', cloneUrl: '', defaultBranch: 'main' },
+        { name: 'flutter/samples', localName: 'samples', cloneUrl: '', defaultBranch: 'main' },
+        { name: 'flutter/packages', localName: 'packages', cloneUrl: '', defaultBranch: 'main' },
+        { name: 'flutter/website', localName: 'website', cloneUrl: '', defaultBranch: 'main' },
+        { name: 'dart-lang/sdk', localName: 'sdk', cloneUrl: '', defaultBranch: 'main' },
+        { name: 'dart-lang/site-www', localName: 'site-www', cloneUrl: '', defaultBranch: 'main' },
+      ],
+      startBackgroundUpdate: vi.fn().mockReturnValue([]),
+    } as unknown as RepositoryManager;
+
+    const readinessChecker = new KnowledgeBaseReadinessChecker(repositories, store, new SilentLogger());
+    const engine = new IntendedBehaviourEngine(store, readinessChecker);
+    const handler = new FindIntendedBehaviorHandler(engine);
+    const result = await handler.execute({ topic: 'Container' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Served what's available now rather than waiting for 100% completion.
+      expect(result.data.status).toBe('ok');
+      expect(result.data.results.length).toBeGreaterThan(0);
+      expect(result.data.knowledgeBase?.skippedSources).toEqual(
+        expect.arrayContaining(['flutter/samples', 'dart-lang/sdk']),
+      );
+      expect(result.data.suggestedAction).toMatch(/update_repositories/i);
+    }
+    expect(repositories.startBackgroundUpdate).not.toHaveBeenCalled();
     store.close();
   });
 

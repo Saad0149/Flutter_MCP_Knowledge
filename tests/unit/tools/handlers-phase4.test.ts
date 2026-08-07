@@ -1,10 +1,34 @@
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FindIntendedBehaviorHandler } from '../../../src/tools/find-intended-behavior.js';
 import { SearchDocsHandler } from '../../../src/tools/search-docs.js';
 import { IntendedBehaviourEngine } from '../../../src/analysis/insight/intended-behaviour-engine.js';
+import { KnowledgeBaseReadinessChecker } from '../../../src/repository/knowledge-base-readiness.js';
+import type { RepositoryDefinition, RepositoryManager } from '../../../src/repository/types.js';
 import { createSqliteKnowledgeStore } from '../../../src/store/sqlite-store.js';
 import { createTempDir, removeTempDir } from '../../helpers/git-fixtures.js';
+import { SilentLogger } from '../../helpers/silent-logger.js';
+
+/** Repos "cloned and fresh" so the readiness checker reports ready/degraded, never building. */
+function freshRepositoryManager(names: readonly string[]): RepositoryManager {
+  const definitions = names.map(
+    (name) => ({ name, localName: name, cloneUrl: '', defaultBranch: 'main' }) satisfies RepositoryDefinition,
+  );
+  return {
+    getStatus: vi.fn().mockResolvedValue(
+      names.map((name) => ({
+        name,
+        exists: true,
+        path: `/repos/${name}`,
+        branch: 'main',
+        commit: 'abc123',
+        lastPull: new Date().toISOString(),
+      })),
+    ),
+    listDefinitions: () => definitions,
+    startBackgroundUpdate: vi.fn().mockReturnValue([]),
+  } as unknown as RepositoryManager;
+}
 
 describe('Phase 4 tools', () => {
   let tempDir: string | undefined;
@@ -116,8 +140,10 @@ describe('Phase 4 tools', () => {
       expect(docs.data.results[0]?.docKind).toBe('migration');
     }
 
+    const repositories = freshRepositoryManager(['flutter/flutter', 'flutter/website']);
+    const readinessChecker = new KnowledgeBaseReadinessChecker(repositories, store, new SilentLogger());
     const intended = await new FindIntendedBehaviorHandler(
-      new IntendedBehaviourEngine(store),
+      new IntendedBehaviourEngine(store, readinessChecker),
     ).execute({
       topic: 'Container',
     });

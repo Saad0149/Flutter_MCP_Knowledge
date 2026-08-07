@@ -47,7 +47,11 @@ export { MetricsEngine } from './metrics/metrics-engine.js';
 export { ExplanationEngine } from './insight/explanation-engine.js';
 export type { FindingExplanation } from './insight/explanation-engine.js';
 export { RecommendationEngine } from './insight/recommendation-engine.js';
-export type { FindingRecommendation } from './insight/recommendation-engine.js';
+export type {
+  FindingRecommendation,
+  RecommendationDifficulty,
+  RecommendationPriority,
+} from './insight/recommendation-engine.js';
 export { ProjectHealthScorer } from './insight/project-health-scorer.js';
 export { IntendedBehaviourEngine } from './insight/intended-behaviour-engine.js';
 export type {

@@ -12,6 +12,12 @@ import type { ProjectAnalysisReport } from '../analysis/index.js';
 import type { Logger } from '../types/logger.js';
 import { TYPES } from '../types/tokens.js';
 import { toolFail, toolOk, type ToolResult } from './tool-result.js';
+import {
+  checkAnalyzableSession,
+  withSizeMetadata,
+  type Sized,
+  type SizedBlockedResult,
+} from './tool-response-helpers.js';
 
 export const ReviewProjectInputSchema = z.object({
   path: z
@@ -31,6 +37,8 @@ export type ReviewProjectData =
   | ReviewProjectSummary
   | (Omit<ProjectAnalysisReport, 'snapshot'> & { readonly sessionId: string });
 
+export type ReviewProjectResult = Sized<ReviewProjectData> | SizedBlockedResult;
+
 @injectable()
 export class ReviewProjectHandler {
   constructor(
@@ -38,7 +46,7 @@ export class ReviewProjectHandler {
     @inject(TYPES.Logger) private readonly logger: Logger,
   ) {}
 
-  async execute(input: ReviewProjectInput): Promise<ToolResult<ReviewProjectData>> {
+  async execute(input: ReviewProjectInput): Promise<ToolResult<ReviewProjectResult>> {
     try {
       const parsed = ReviewProjectInputSchema.safeParse(input);
       if (!parsed.success) {
@@ -62,14 +70,21 @@ export class ReviewProjectHandler {
         detail: parsed.data.detail ?? 'summary',
       });
 
-      if (parsed.data.detail === 'full') {
-        return toolOk({
-          sessionId: session.sessionId,
-          ...session.report,
-        });
+      const blocked = checkAnalyzableSession(session);
+      if (blocked) {
+        return toolOk(withSizeMetadata(blocked));
       }
 
-      return toolOk(buildReviewSummary(session.sessionId, session.report));
+      if (parsed.data.detail === 'full') {
+        return toolOk(
+          withSizeMetadata({
+            sessionId: session.sessionId,
+            ...session.report,
+          }),
+        );
+      }
+
+      return toolOk(withSizeMetadata(buildReviewSummary(session.sessionId, session.report)));
     } catch (error) {
       return toolFail(error);
     }

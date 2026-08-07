@@ -9,11 +9,20 @@ import {
 } from '../analysis/session/summary-views.js';
 import { TYPES } from '../types/tokens.js';
 import { toolFail, toolOk, type ToolResult } from './tool-result.js';
+import {
+  checkAnalyzableSession,
+  filterFindingsByScope,
+  ScopeFilterSchema,
+  withSizeMetadata,
+  type Sized,
+  type SizedBlockedResult,
+} from './tool-response-helpers.js';
 
 export const AnalyzeTestingInputObjectSchema = z.object({
   sessionId: z.string().min(1).optional(),
   path: z.string().min(1).optional(),
   limit: z.number().int().positive().max(200).optional(),
+  ...ScopeFilterSchema,
 });
 
 export const AnalyzeTestingInputSchema = AnalyzeTestingInputObjectSchema.refine(
@@ -42,7 +51,9 @@ export interface AnalyzeTestingData {
 export class AnalyzeTestingHandler {
   constructor(@inject(TYPES.AnalysisSessionStore) private readonly sessions: AnalysisSessionStore) {}
 
-  async execute(input: AnalyzeTestingInput): Promise<ToolResult<AnalyzeTestingData>> {
+  async execute(
+    input: AnalyzeTestingInput,
+  ): Promise<ToolResult<Sized<AnalyzeTestingData> | SizedBlockedResult>> {
     try {
       const parsed = AnalyzeTestingInputSchema.safeParse(input);
       if (!parsed.success) {
@@ -59,25 +70,34 @@ export class AnalyzeTestingHandler {
         limit: parsed.data.limit,
       });
 
+      const blocked = checkAnalyzableSession(session);
+      if (blocked) {
+        return toolOk(withSizeMetadata(blocked));
+      }
+
       const report = session.report;
       const facts = report.results.testing.facts;
       const score = report.health.scores.find((s) => s.id === 'testing');
-      const findings = report.results.testing.findings.map(toFindingCard);
+      const findings = filterFindingsByScope(report.results.testing.findings, parsed.data).map(
+        toFindingCard,
+      );
 
-      return toolOk({
-        sessionId: session.sessionId,
-        fromCache,
-        score: score ? toScoreCard(score) : undefined,
-        testFileCount: facts.testFileCount,
-        libFileCount: facts.libFileCount,
-        testToLibRatio: facts.testToLibRatio,
-        widgetTestCount: facts.widgetTestCount,
-        integrationTestCount: facts.integrationTestCount,
-        goldenTestCount: facts.goldenTestCount,
-        testedFeatures: facts.testedFeatures,
-        untestedFeatures: facts.untestedFeatures,
-        findings,
-      });
+      return toolOk(
+        withSizeMetadata({
+          sessionId: session.sessionId,
+          fromCache,
+          score: score ? toScoreCard(score) : undefined,
+          testFileCount: facts.testFileCount,
+          libFileCount: facts.libFileCount,
+          testToLibRatio: facts.testToLibRatio,
+          widgetTestCount: facts.widgetTestCount,
+          integrationTestCount: facts.integrationTestCount,
+          goldenTestCount: facts.goldenTestCount,
+          testedFeatures: facts.testedFeatures,
+          untestedFeatures: facts.untestedFeatures,
+          findings,
+        }),
+      );
     } catch (error) {
       return toolFail(error);
     }

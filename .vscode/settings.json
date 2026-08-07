@@ -1,0 +1,13 @@
+{
+  "dart.analysisExcludedFolders": ["repos"],
+  "dart.previewFlutterUiGuides": false,
+  "files.watcherExclude": {
+    "repos/**": true
+  },
+  "search.exclude": {
+    "repos/**": true
+  },
+  "files.exclude": {
+    "repos": false
+  }
+}

@@ -1,5 +1,6 @@
 import { inject, injectable } from 'tsyringe';
 import { z } from 'zod';
+import type { KnowledgeBaseNotice, KnowledgeBaseReadinessChecker } from '../repository/knowledge-base-readiness.js';
 import type { KnowledgeStore } from '../store/types.js';
 import { TYPES } from '../types/tokens.js';
 import { toolFail, toolOk, type ToolResult } from './tool-result.js';
@@ -25,11 +26,16 @@ export interface BestPracticeHit {
 export interface FindBestPracticeData {
   readonly topic: string;
   readonly results: readonly BestPracticeHit[];
+  readonly knowledgeBase?: KnowledgeBaseNotice;
 }
 
 @injectable()
 export class FindBestPracticeHandler {
-  constructor(@inject(TYPES.KnowledgeStore) private readonly store: KnowledgeStore) {}
+  constructor(
+    @inject(TYPES.KnowledgeStore) private readonly store: KnowledgeStore,
+    @inject(TYPES.KnowledgeBaseReadinessChecker)
+    private readonly readiness?: KnowledgeBaseReadinessChecker,
+  ) {}
 
   async execute(input: FindBestPracticeInput): Promise<ToolResult<FindBestPracticeData>> {
     try {
@@ -44,6 +50,13 @@ export class FindBestPracticeHandler {
 
       const topic = parsed.data.topic.trim();
       const limit = parsed.data.limit ?? 20;
+
+      const readiness = await this.readiness?.check();
+      if (readiness?.state === 'building') {
+        return toolOk({ topic, results: [], knowledgeBase: readiness.notice });
+      }
+      const knowledgeBase = readiness?.state === 'degraded' ? readiness.notice : undefined;
+
       const hits: BestPracticeHit[] = [];
 
       const prioritized = this.store.findDocs({
@@ -85,6 +98,7 @@ export class FindBestPracticeHandler {
       return toolOk({
         topic,
         results: dedupeHits(hits).slice(0, limit),
+        knowledgeBase,
       });
     } catch (error) {
       return toolFail(error);

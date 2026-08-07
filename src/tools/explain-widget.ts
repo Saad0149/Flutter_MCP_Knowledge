@@ -1,5 +1,6 @@
 import { inject, injectable } from 'tsyringe';
 import { z } from 'zod';
+import type { KnowledgeBaseNotice, KnowledgeBaseReadinessChecker } from '../repository/knowledge-base-readiness.js';
 import type { KnowledgeStore } from '../store/types.js';
 import { TYPES } from '../types/tokens.js';
 import { toolFail, toolOk, type ToolResult } from './tool-result.js';
@@ -23,11 +24,16 @@ export interface ExplainWidgetData {
   readonly implementsClause: string | null;
   readonly documentation: string | null;
   readonly repository: string | null;
+  readonly knowledgeBase?: KnowledgeBaseNotice;
 }
 
 @injectable()
 export class ExplainWidgetHandler {
-  constructor(@inject(TYPES.KnowledgeStore) private readonly store: KnowledgeStore) {}
+  constructor(
+    @inject(TYPES.KnowledgeStore) private readonly store: KnowledgeStore,
+    @inject(TYPES.KnowledgeBaseReadinessChecker)
+    private readonly readiness?: KnowledgeBaseReadinessChecker,
+  ) {}
 
   async execute(input: ExplainWidgetInput): Promise<ToolResult<ExplainWidgetData>> {
     try {
@@ -42,6 +48,25 @@ export class ExplainWidgetHandler {
 
       const name = parsed.data.name.trim();
       const repository = parsed.data.repository ?? 'flutter/flutter';
+
+      const readiness = await this.readiness?.check();
+      if (readiness?.state === 'building') {
+        return toolOk({
+          widget: name,
+          found: false,
+          file: null,
+          line: null,
+          package: null,
+          kind: null,
+          extendsClause: null,
+          withClause: null,
+          implementsClause: null,
+          documentation: null,
+          repository: null,
+          knowledgeBase: readiness.notice,
+        });
+      }
+      const knowledgeBase = readiness?.state === 'degraded' ? readiness.notice : undefined;
 
       const hit =
         this.store.getSymbolByName(name, { isWidget: true, repositoryName: repository }) ??
@@ -62,6 +87,7 @@ export class ExplainWidgetHandler {
           implementsClause: null,
           documentation: null,
           repository: null,
+          knowledgeBase,
         });
       }
 
@@ -72,6 +98,7 @@ export class ExplainWidgetHandler {
         line: hit.line,
         package: hit.packageName,
         kind: hit.kind,
+        knowledgeBase,
         extendsClause: hit.extendsClause,
         withClause: hit.withClause,
         implementsClause: hit.implementsClause,

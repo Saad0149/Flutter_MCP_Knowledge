@@ -1,4 +1,5 @@
 import { inject, injectable } from 'tsyringe';
+import { KnowledgeBaseReadinessChecker } from '../../repository/knowledge-base-readiness.js';
 import type { KnowledgeStore } from '../../store/types.js';
 import { TYPES } from '../../types/tokens.js';
 
@@ -29,7 +30,9 @@ export interface IntendedBehaviourResult {
   readonly searchedSteps: readonly BehaviourSourceStep[];
   readonly exhaustedAllSources: boolean;
   readonly summary: string;
-  readonly status: 'ok' | 'empty' | 'blocked';
+  readonly status: 'ok' | 'empty' | 'blocked' | 'building';
+  /** The exact next tool call that would resolve/progress a building/degraded result. */
+  readonly suggestedAction?: string;
   readonly knowledgeBase?: {
     readonly available: boolean;
     readonly reason: string;
@@ -37,8 +40,19 @@ export interface IntendedBehaviourResult {
     readonly nextStep: string;
     readonly indexedRepositoryCount: number;
     readonly indexedSymbolCount: number;
+    /** Sources missing or stale when the knowledge base is only partially built. */
+    readonly skippedSources?: readonly string[];
   };
 }
+
+const EXPECTED_SOURCES = [
+  'flutter/flutter',
+  'flutter/samples',
+  'flutter/packages',
+  'flutter/website',
+  'dart-lang/sdk',
+  'dart-lang/site-www',
+] as const;
 
 /**
  * Cascading intended-behaviour search across the local knowledge index.
@@ -46,58 +60,61 @@ export interface IntendedBehaviourResult {
  */
 @injectable()
 export class IntendedBehaviourEngine {
-  constructor(@inject(TYPES.KnowledgeStore) private readonly store: KnowledgeStore) {}
+  constructor(
+    @inject(TYPES.KnowledgeStore) private readonly store: KnowledgeStore,
+    @inject(TYPES.KnowledgeBaseReadinessChecker)
+    private readonly readinessChecker: KnowledgeBaseReadinessChecker,
+  ) {}
 
-  search(topic: string, limit = 25): IntendedBehaviourResult {
+  async search(topic: string, limit = 25): Promise<IntendedBehaviourResult> {
+    const readiness = await this.readinessChecker.check();
     const indexedRepos = this.store.listRepositories().length;
-    const probe = this.store.findSymbols({ limit: 1 });
-    const indexedSymbols = probe.length; // presence check; full count not required
+    const indexedSymbols = this.store.getStats().symbolCount;
 
-    const expectedSources = [
-      'flutter/flutter',
-      'flutter/samples',
-      'flutter/packages',
-      'flutter/website',
-      'dart-lang/sdk',
-      'dart-lang/site-www',
-    ] as const;
-
-    if (indexedRepos === 0 || indexedSymbols === 0) {
-      // Still run cascade so searchedSteps is honest, but surface blocked status.
-      const emptySearch = this.runCascade(topic, limit);
+    if (readiness.state === 'building') {
+      // Nothing usable is on disk/indexed yet — the background clone was just
+      // (re)triggered. Don't block for minutes or run a cascade over nothing;
+      // report back immediately so the caller can retry shortly.
       return {
         topic,
-        results: emptySearch.results,
-        searchedSteps: emptySearch.searchedSteps,
-        exhaustedAllSources: true,
-        status: 'blocked',
-        summary:
-          'Knowledge base unavailable — Flutter/Dart repositories are not indexed. Project analyzers still work; intended-behaviour lookup cannot until you clone and index official sources.',
+        results: [],
+        searchedSteps: [],
+        exhaustedAllSources: false,
+        status: 'building',
+        summary: readiness.notice.message,
+        suggestedAction: readiness.notice.suggestedAction,
         knowledgeBase: {
           available: false,
-          reason: 'Flutter repositories not indexed (index empty or missing official repos).',
-          expectedSources: [...expectedSources],
-          nextStep: 'Run update_repositories, then reindex on this MCP server.',
+          reason: 'Flutter/Dart repositories are being cloned in the background.',
+          expectedSources: [...EXPECTED_SOURCES],
+          nextStep: readiness.notice.suggestedAction,
           indexedRepositoryCount: indexedRepos,
           indexedSymbolCount: indexedSymbols,
         },
       };
     }
 
+    const degraded = readiness.state === 'degraded' ? readiness.notice : undefined;
     const result = this.runCascade(topic, limit);
+
     if (result.results.length === 0) {
       return {
         topic,
         ...result,
         status: 'empty',
-        summary: `Searched all ${result.searchedSteps.length} knowledge sources for "${topic}" with no indexed matches. Try a more specific Flutter API/widget name, or expand the index.`,
+        suggestedAction: degraded?.suggestedAction,
+        summary: degraded
+          ? `Searched all ${result.searchedSteps.length} knowledge sources for "${topic}" with no indexed matches. ${degraded.message}`
+          : `Searched all ${result.searchedSteps.length} knowledge sources for "${topic}" with no indexed matches. Try a more specific Flutter API/widget name, or expand the index.`,
         knowledgeBase: {
           available: true,
-          reason: 'Index is present but no matches for this topic.',
-          expectedSources: [...expectedSources],
-          nextStep: 'Try a concrete widget/API name (e.g. StatefulWidget, Provider).',
+          reason: degraded ? degraded.message : 'Index is present but no matches for this topic.',
+          expectedSources: [...EXPECTED_SOURCES],
+          nextStep:
+            degraded?.suggestedAction ?? 'Try a concrete widget/API name (e.g. StatefulWidget, Provider).',
           indexedRepositoryCount: indexedRepos,
-          indexedSymbolCount: -1,
+          indexedSymbolCount: indexedSymbols,
+          skippedSources: degraded?.skippedSources,
         },
       };
     }
@@ -106,14 +123,18 @@ export class IntendedBehaviourEngine {
       topic,
       ...result,
       status: 'ok',
-      summary: `Found ${result.results.length} intended-behaviour match(es) for "${topic}" after cascading ${result.searchedSteps.length} knowledge sources.`,
+      suggestedAction: degraded?.suggestedAction,
+      summary: degraded
+        ? `Found ${result.results.length} intended-behaviour match(es) for "${topic}" after cascading ${result.searchedSteps.length} knowledge sources. Note: ${degraded.skippedSources?.join(', ')} skipped — ${degraded.message}`
+        : `Found ${result.results.length} intended-behaviour match(es) for "${topic}" after cascading ${result.searchedSteps.length} knowledge sources.`,
       knowledgeBase: {
         available: true,
-        reason: 'Official knowledge index available.',
-        expectedSources: [...expectedSources],
-        nextStep: 'Use matched samples/docs as reference implementations.',
+        reason: degraded ? degraded.message : 'Official knowledge index available.',
+        expectedSources: [...EXPECTED_SOURCES],
+        nextStep: degraded?.suggestedAction ?? 'Use matched samples/docs as reference implementations.',
         indexedRepositoryCount: indexedRepos,
-        indexedSymbolCount: -1,
+        indexedSymbolCount: indexedSymbols,
+        skippedSources: degraded?.skippedSources,
       },
     };
   }

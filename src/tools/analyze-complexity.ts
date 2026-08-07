@@ -9,11 +9,20 @@ import {
 } from '../analysis/session/summary-views.js';
 import { TYPES } from '../types/tokens.js';
 import { toolFail, toolOk, type ToolResult } from './tool-result.js';
+import {
+  checkAnalyzableSession,
+  filterFindingsByScope,
+  ScopeFilterSchema,
+  withSizeMetadata,
+  type Sized,
+  type SizedBlockedResult,
+} from './tool-response-helpers.js';
 
 export const AnalyzeComplexityInputObjectSchema = z.object({
   sessionId: z.string().min(1).optional(),
   path: z.string().min(1).optional(),
   limit: z.number().int().positive().max(200).optional(),
+  ...ScopeFilterSchema,
 });
 
 export const AnalyzeComplexityInputSchema = AnalyzeComplexityInputObjectSchema.refine(
@@ -35,7 +44,9 @@ export interface AnalyzeComplexityData {
 export class AnalyzeComplexityHandler {
   constructor(@inject(TYPES.AnalysisSessionStore) private readonly sessions: AnalysisSessionStore) {}
 
-  async execute(input: AnalyzeComplexityInput): Promise<ToolResult<AnalyzeComplexityData>> {
+  async execute(
+    input: AnalyzeComplexityInput,
+  ): Promise<ToolResult<Sized<AnalyzeComplexityData> | SizedBlockedResult>> {
     try {
       const parsed = AnalyzeComplexityInputSchema.safeParse(input);
       if (!parsed.success) {
@@ -52,23 +63,32 @@ export class AnalyzeComplexityHandler {
         limit: parsed.data.limit,
       });
 
+      const blocked = checkAnalyzableSession(session);
+      if (blocked) {
+        return toolOk(withSizeMetadata(blocked));
+      }
+
       const report = session.report;
       const facts = report.results.complexity.facts;
       const score = report.health.scores.find((s) => s.id === 'complexity');
-      const findings = report.results.complexity.findings.map(toFindingCard);
+      const findings = filterFindingsByScope(report.results.complexity.findings, parsed.data).map(
+        toFindingCard,
+      );
 
       const detected =
         `avg file: ${Math.round(facts.averageFileLoc)} LOC, ` +
         `${facts.largeFileCount} files >${facts.largeFileThreshold} LOC, ` +
         `estimated high-complexity files: ${facts.estimatedHighComplexityFiles}`;
 
-      return toolOk({
-        sessionId: session.sessionId,
-        fromCache,
-        detected,
-        score: score ? toScoreCard(score) : undefined,
-        findings,
-      });
+      return toolOk(
+        withSizeMetadata({
+          sessionId: session.sessionId,
+          fromCache,
+          detected,
+          score: score ? toScoreCard(score) : undefined,
+          findings,
+        }),
+      );
     } catch (error) {
       return toolFail(error);
     }

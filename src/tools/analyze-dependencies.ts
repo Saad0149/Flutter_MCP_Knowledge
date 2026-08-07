@@ -10,12 +10,21 @@ import {
 import { TYPES } from '../types/tokens.js';
 import { toolFail, toolOk, type ToolResult } from './tool-result.js';
 import type { LayerViolation } from '../analysis/engines/dependency-analyzer.js';
+import {
+  checkAnalyzableSession,
+  filterFindingsByScope,
+  ScopeFilterSchema,
+  withSizeMetadata,
+  type Sized,
+  type SizedBlockedResult,
+} from './tool-response-helpers.js';
 
 export const AnalyzeDependenciesInputObjectSchema = z.object({
   sessionId: z.string().min(1).optional(),
   path: z.string().min(1).optional(),
   limit: z.number().int().positive().max(200).optional(),
   detail: z.enum(['slim', 'full']).optional(),
+  ...ScopeFilterSchema,
 });
 
 export const AnalyzeDependenciesInputSchema = AnalyzeDependenciesInputObjectSchema.refine(
@@ -47,7 +56,9 @@ export type AnalyzeDependenciesData = AnalyzeDependenciesSlimData | AnalyzeDepen
 export class AnalyzeDependenciesHandler {
   constructor(@inject(TYPES.AnalysisSessionStore) private readonly sessions: AnalysisSessionStore) {}
 
-  async execute(input: AnalyzeDependenciesInput): Promise<ToolResult<AnalyzeDependenciesData>> {
+  async execute(
+    input: AnalyzeDependenciesInput,
+  ): Promise<ToolResult<Sized<AnalyzeDependenciesData> | SizedBlockedResult>> {
     try {
       const parsed = AnalyzeDependenciesInputSchema.safeParse(input);
       if (!parsed.success) {
@@ -64,10 +75,17 @@ export class AnalyzeDependenciesHandler {
         limit: parsed.data.limit,
       });
 
+      const blocked = checkAnalyzableSession(session);
+      if (blocked) {
+        return toolOk(withSizeMetadata(blocked));
+      }
+
       const report = session.report;
       const facts = report.results.dependency.facts;
       const score = report.health.scores.find((s) => s.id === 'dependency');
-      const findings = report.results.dependency.findings.map(toFindingCard);
+      const findings = filterFindingsByScope(report.results.dependency.findings, parsed.data).map(
+        toFindingCard,
+      );
 
       const slim: AnalyzeDependenciesSlimData = {
         sessionId: session.sessionId,
@@ -81,14 +99,16 @@ export class AnalyzeDependenciesHandler {
       };
 
       if (parsed.data.detail === 'full') {
-        return toolOk({
-          ...slim,
-          layerViolations: facts.layerViolations,
-          circularCycles: facts.circularCycles,
-        });
+        return toolOk(
+          withSizeMetadata({
+            ...slim,
+            layerViolations: facts.layerViolations,
+            circularCycles: facts.circularCycles,
+          }),
+        );
       }
 
-      return toolOk(slim);
+      return toolOk(withSizeMetadata(slim));
     } catch (error) {
       return toolFail(error);
     }

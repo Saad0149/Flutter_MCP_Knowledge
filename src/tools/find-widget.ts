@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { inject, injectable } from 'tsyringe';
 import { z } from 'zod';
+import type { KnowledgeBaseNotice, KnowledgeBaseReadinessChecker } from '../repository/knowledge-base-readiness.js';
 import type { SearchService } from '../search/search-service.js';
 import type { SearchMatch } from '../search/types.js';
 import type { KnowledgeStore, SymbolSearchHit } from '../store/types.js';
@@ -36,6 +37,7 @@ export interface FindWidgetData {
   readonly description: string | null;
   readonly source: 'index' | 'filesystem';
   readonly locations: readonly WidgetLocation[];
+  readonly knowledgeBase?: KnowledgeBaseNotice;
 }
 
 @injectable()
@@ -43,6 +45,8 @@ export class FindWidgetHandler {
   constructor(
     @inject(TYPES.SearchService) private readonly searchService: SearchService,
     @inject(TYPES.KnowledgeStore) private readonly store: KnowledgeStore,
+    @inject(TYPES.KnowledgeBaseReadinessChecker)
+    private readonly readiness?: KnowledgeBaseReadinessChecker,
   ) {}
 
   async execute(input: FindWidgetInput): Promise<ToolResult<FindWidgetData>> {
@@ -60,12 +64,26 @@ export class FindWidgetHandler {
       const repository = parsed.data.repository ?? 'flutter/flutter';
       const limit = parsed.data.limit ?? 40;
 
+      const readiness = await this.readiness?.check();
+      if (readiness?.state === 'building') {
+        return toolOk({
+          widget: widgetName,
+          file: null,
+          package: null,
+          description: null,
+          source: 'index',
+          locations: [],
+          knowledgeBase: readiness.notice,
+        });
+      }
+      const knowledgeBase = readiness?.state === 'degraded' ? readiness.notice : undefined;
+
       const indexed = this.tryIndex(widgetName, repository, limit);
       if (indexed) {
-        return toolOk(indexed);
+        return toolOk({ ...indexed, knowledgeBase });
       }
 
-      return toolOk(await this.fallbackSearch(widgetName, repository, limit));
+      return toolOk({ ...(await this.fallbackSearch(widgetName, repository, limit)), knowledgeBase });
     } catch (error) {
       return toolFail(error);
     }

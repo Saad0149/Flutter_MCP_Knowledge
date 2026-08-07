@@ -1,5 +1,15 @@
 import type { AnalysisFinding, HealthScore, PriorityAction } from '../types.js';
 import type { ProjectAnalysisReport } from '../insight/project-report-builder.js';
+import { sampleFilesFor } from '../../tools/tool-response-helpers.js';
+
+export interface TopRiskCard {
+  readonly title: string;
+  readonly sampleFiles: readonly string[];
+}
+
+export interface TopActionCard extends PriorityAction {
+  readonly sampleFiles: readonly string[];
+}
 
 /** Compact finding card for chat — no nested evidence dumps. */
 export interface FindingCard {
@@ -36,9 +46,9 @@ export interface ReviewProjectSummary {
    */
   readonly fidelityNotice?: string;
   readonly overview: string;
-  readonly topRisks: readonly string[];
+  readonly topRisks: readonly TopRiskCard[];
   readonly topStrengths: readonly string[];
-  readonly topActions: readonly PriorityAction[];
+  readonly topActions: readonly TopActionCard[];
   readonly scores: readonly ScoreCard[];
   readonly technicalDebt: {
     readonly debtScore: number;
@@ -81,6 +91,47 @@ export function toScoreCard(s: HealthScore): ScoreCard {
   };
 }
 
+function severityRank(severity: AnalysisFinding['severity']): number {
+  switch (severity) {
+    case 'negative':
+      return 4;
+    case 'warning':
+      return 3;
+    case 'info':
+      return 1;
+    case 'positive':
+      return 0;
+    default:
+      return 0;
+  }
+}
+
+/** Same ranking ExplanationEngine uses for topRisks, but keeping the real
+ * finding object (not just a formatted string) so we can attach sampleFiles
+ * drawn from its actual evidence. */
+function topRiskCards(findings: readonly AnalysisFinding[], max: number): TopRiskCard[] {
+  return [...findings]
+    .filter((f) => f.severity === 'negative' || f.severity === 'warning')
+    .sort((a, b) => severityRank(b.severity) * b.confidence - severityRank(a.severity) * a.confidence)
+    .slice(0, max)
+    .map((f) => ({
+      title: `${f.title} (confidence ${(f.confidence * 100).toFixed(0)}%, source=${f.source})`,
+      sampleFiles: sampleFilesFor(f),
+    }));
+}
+
+function topActionCards(
+  actions: readonly PriorityAction[],
+  findings: readonly AnalysisFinding[],
+  max: number,
+): TopActionCard[] {
+  const byCode = new Map(findings.map((f) => [f.code, f]));
+  return actions.slice(0, max).map((action) => ({
+    ...action,
+    sampleFiles: sampleFilesFor(byCode.get(action.findingCode)),
+  }));
+}
+
 export function buildReviewSummary(
   sessionId: string,
   report: Omit<ProjectAnalysisReport, 'snapshot'>,
@@ -105,9 +156,9 @@ export function buildReviewSummary(
         `Call check_environment to see why the Dart analyzer wasn't used and how to fix it.`
       : undefined,
     overview: report.insight.overview,
-    topRisks: report.healthReport.topRisks.slice(0, 5),
+    topRisks: topRiskCards(report.findings, 5),
     topStrengths: report.healthReport.topStrengths.slice(0, 5),
-    topActions: report.topActions.slice(0, 5),
+    topActions: topActionCards(report.topActions, report.findings, 5),
     scores: [...report.health.scores, report.health.overall].map(toScoreCard),
     technicalDebt: {
       debtScore: report.technicalDebt.debtScore,

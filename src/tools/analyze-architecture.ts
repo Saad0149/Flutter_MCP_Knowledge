@@ -10,6 +10,14 @@ import {
 } from '../analysis/session/summary-views.js';
 import { TYPES } from '../types/tokens.js';
 import { toolFail, toolOk, type ToolResult } from './tool-result.js';
+import {
+  checkAnalyzableSession,
+  filterFindingsByScope,
+  ScopeFilterSchema,
+  withSizeMetadata,
+  type Sized,
+  type SizedBlockedResult,
+} from './tool-response-helpers.js';
 
 /** Object schema (MCP registration). Prefer sessionId over path. */
 export const AnalyzeArchitectureInputObjectSchema = z.object({
@@ -24,6 +32,7 @@ export const AnalyzeArchitectureInputObjectSchema = z.object({
     .optional()
     .describe('Project path — used only when sessionId is omitted (triggers analysis)'),
   limit: z.number().int().positive().max(200).optional(),
+  ...ScopeFilterSchema,
 });
 
 export const AnalyzeArchitectureInputSchema = AnalyzeArchitectureInputObjectSchema.refine(
@@ -54,7 +63,9 @@ export interface AnalyzeArchitectureData {
 export class AnalyzeArchitectureHandler {
   constructor(@inject(TYPES.AnalysisSessionStore) private readonly sessions: AnalysisSessionStore) {}
 
-  async execute(input: AnalyzeArchitectureInput): Promise<ToolResult<AnalyzeArchitectureData>> {
+  async execute(
+    input: AnalyzeArchitectureInput,
+  ): Promise<ToolResult<Sized<AnalyzeArchitectureData> | SizedBlockedResult>> {
     try {
       const parsed = AnalyzeArchitectureInputSchema.safeParse(input);
       if (!parsed.success) {
@@ -71,15 +82,19 @@ export class AnalyzeArchitectureHandler {
         limit: parsed.data.limit,
       });
 
+      const blocked = checkAnalyzableSession(session);
+      if (blocked) {
+        return toolOk(withSizeMetadata(blocked));
+      }
+
       const report = session.report;
-      const findings = filterFindingsByCategory(report.findings, [
-        'architecture',
-        'dependency',
-        'testing',
-      ]);
+      const findings = filterFindingsByScope(
+        filterFindingsByCategory(report.findings, ['architecture', 'dependency', 'testing']),
+        parsed.data,
+      );
       const score = report.health.scores.find((s) => s.id === 'architecture');
 
-      return toolOk({
+      return toolOk(withSizeMetadata({
         sessionId: session.sessionId,
         fromCache,
         projectPath: report.projectPath,
@@ -103,7 +118,7 @@ export class AnalyzeArchitectureHandler {
           .map((f) => f.title),
         findings: findings.map(toFindingCard),
         usage: 'Use explore_finding / explain_finding with this sessionId + findingCode for evidence.',
-      });
+      }));
     } catch (error) {
       return toolFail(error);
     }

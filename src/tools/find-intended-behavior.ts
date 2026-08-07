@@ -7,6 +7,7 @@ import {
 } from '../analysis/insight/intended-behaviour-engine.js';
 import { TYPES } from '../types/tokens.js';
 import { toolFail, toolOk, type ToolResult } from './tool-result.js';
+import { withSizeMetadata, type Sized } from './tool-response-helpers.js';
 
 export const FindIntendedBehaviorInputSchema = z.object({
   topic: z
@@ -51,7 +52,9 @@ export interface FindIntendedBehaviorData {
   readonly searchedSteps: readonly string[];
   readonly exhaustedAllSources: boolean;
   readonly summary: string;
-  readonly status: 'ok' | 'empty' | 'blocked';
+  readonly status: 'ok' | 'empty' | 'blocked' | 'building';
+  /** The exact next tool call that would resolve/progress a building/degraded result. */
+  readonly suggestedAction?: string;
   readonly knowledgeBase?: {
     readonly available: boolean;
     readonly reason: string;
@@ -59,6 +62,7 @@ export interface FindIntendedBehaviorData {
     readonly nextStep: string;
     readonly indexedRepositoryCount: number;
     readonly indexedSymbolCount: number;
+    readonly skippedSources?: readonly string[];
   };
 }
 
@@ -71,7 +75,7 @@ export class FindIntendedBehaviorHandler {
 
   async execute(
     input: FindIntendedBehaviorInput,
-  ): Promise<ToolResult<FindIntendedBehaviorData>> {
+  ): Promise<ToolResult<Sized<FindIntendedBehaviorData>>> {
     try {
       const parsed = FindIntendedBehaviorInputSchema.safeParse(input);
       if (!parsed.success) {
@@ -82,20 +86,23 @@ export class FindIntendedBehaviorHandler {
         });
       }
 
-      const result: IntendedBehaviourResult = this.engine.search(
+      const result: IntendedBehaviourResult = await this.engine.search(
         parsed.data.topic.trim(),
         parsed.data.limit ?? 25,
       );
 
-      return toolOk({
-        topic: result.topic,
-        results: result.results.map(mapHit),
-        searchedSteps: result.searchedSteps,
-        exhaustedAllSources: result.exhaustedAllSources,
-        summary: result.summary,
-        status: result.status,
-        knowledgeBase: result.knowledgeBase,
-      });
+      return toolOk(
+        withSizeMetadata({
+          topic: result.topic,
+          results: result.results.map(mapHit),
+          searchedSteps: result.searchedSteps,
+          exhaustedAllSources: result.exhaustedAllSources,
+          summary: result.summary,
+          status: result.status,
+          suggestedAction: result.suggestedAction,
+          knowledgeBase: result.knowledgeBase,
+        }),
+      );
     } catch (error) {
       return toolFail(error);
     }

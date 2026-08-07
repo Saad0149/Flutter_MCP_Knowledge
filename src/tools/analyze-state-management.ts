@@ -10,11 +10,20 @@ import {
 } from '../analysis/session/summary-views.js';
 import { TYPES } from '../types/tokens.js';
 import { toolFail, toolOk, type ToolResult } from './tool-result.js';
+import {
+  checkAnalyzableSession,
+  filterFindingsByScope,
+  ScopeFilterSchema,
+  withSizeMetadata,
+  type Sized,
+  type SizedBlockedResult,
+} from './tool-response-helpers.js';
 
 export const AnalyzeStateManagementInputObjectSchema = z.object({
   sessionId: z.string().min(1).optional(),
   path: z.string().min(1).optional(),
   limit: z.number().int().positive().max(200).optional(),
+  ...ScopeFilterSchema,
 });
 
 export const AnalyzeStateManagementInputSchema = AnalyzeStateManagementInputObjectSchema.refine(
@@ -49,7 +58,7 @@ export class AnalyzeStateManagementHandler {
 
   async execute(
     input: AnalyzeStateManagementInput,
-  ): Promise<ToolResult<AnalyzeStateManagementData>> {
+  ): Promise<ToolResult<Sized<AnalyzeStateManagementData> | SizedBlockedResult>> {
     try {
       const parsed = AnalyzeStateManagementInputSchema.safeParse(input);
       if (!parsed.success) {
@@ -66,12 +75,20 @@ export class AnalyzeStateManagementHandler {
         limit: parsed.data.limit,
       });
 
+      const blocked = checkAnalyzableSession(session);
+      if (blocked) {
+        return toolOk(withSizeMetadata(blocked));
+      }
+
       const report = session.report;
-      const findings = filterFindingsByCategory(report.findings, ['state_management']);
+      const findings = filterFindingsByScope(
+        filterFindingsByCategory(report.findings, ['state_management']),
+        parsed.data,
+      );
       const facts = report.results.stateManagement.facts;
       const score = report.health.scores.find((s) => s.id === 'stateManagement');
 
-      return toolOk({
+      return toolOk(withSizeMetadata({
         sessionId: session.sessionId,
         fromCache,
         projectPath: report.projectPath,
@@ -94,7 +111,7 @@ export class AnalyzeStateManagementHandler {
           .map((f) => f.title),
         findings: findings.map(toFindingCard),
         usage: 'Use explore_finding with sessionId + findingCode for evidence.',
-      });
+      }));
     } catch (error) {
       return toolFail(error);
     }

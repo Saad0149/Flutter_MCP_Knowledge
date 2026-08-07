@@ -1,5 +1,6 @@
 import { inject, injectable } from 'tsyringe';
 import { z } from 'zod';
+import type { KnowledgeBaseNotice, KnowledgeBaseReadinessChecker } from '../repository/knowledge-base-readiness.js';
 import type { SearchService } from '../search/search-service.js';
 import type { SearchMatch } from '../search/types.js';
 import { TYPES } from '../types/tokens.js';
@@ -30,11 +31,16 @@ export interface SearchSourceData {
   readonly totalMatches: number;
   readonly truncated: boolean;
   readonly results: readonly SearchSourceHit[];
+  readonly knowledgeBase?: KnowledgeBaseNotice;
 }
 
 @injectable()
 export class SearchSourceHandler {
-  constructor(@inject(TYPES.SearchService) private readonly searchService: SearchService) {}
+  constructor(
+    @inject(TYPES.SearchService) private readonly searchService: SearchService,
+    @inject(TYPES.KnowledgeBaseReadinessChecker)
+    private readonly readiness?: KnowledgeBaseReadinessChecker,
+  ) {}
 
   async execute(input: SearchSourceInput): Promise<ToolResult<SearchSourceData>> {
     try {
@@ -46,6 +52,18 @@ export class SearchSourceHandler {
           details: parsed.error.flatten(),
         });
       }
+
+      const readiness = await this.readiness?.check();
+      if (readiness?.state === 'building') {
+        return toolOk({
+          query: parsed.data.query,
+          totalMatches: 0,
+          truncated: false,
+          results: [],
+          knowledgeBase: readiness.notice,
+        });
+      }
+      const knowledgeBase = readiness?.state === 'degraded' ? readiness.notice : undefined;
 
       const response = await this.searchService.search({
         query: parsed.data.query,
@@ -64,6 +82,7 @@ export class SearchSourceHandler {
           snippet: match.snippet,
           matchType: match.matchType,
         })),
+        knowledgeBase,
       });
     } catch (error) {
       return toolFail(error);

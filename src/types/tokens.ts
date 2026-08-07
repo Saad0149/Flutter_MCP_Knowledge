@@ -7,6 +7,7 @@ export const TYPES = {
   Logger: Symbol.for('Logger'),
   RepositoryDefinitions: Symbol.for('RepositoryDefinitions'),
   RepositoryManager: Symbol.for('RepositoryManager'),
+  KnowledgeBaseReadinessChecker: Symbol.for('KnowledgeBaseReadinessChecker'),
   KnowledgeStore: Symbol.for('KnowledgeStore'),
   SymbolExtractor: Symbol.for('SymbolExtractor'),
   Indexer: Symbol.for('Indexer'),

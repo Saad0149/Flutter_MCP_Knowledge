@@ -37,6 +37,7 @@ import {
   type SymbolExtractor,
 } from '../parser/index.js';
 import { SUPPORTED_REPOSITORIES } from '../repository/definitions.js';
+import { KnowledgeBaseReadinessChecker } from '../repository/knowledge-base-readiness.js';
 import { GitRepositoryManager } from '../repository/repository-manager.js';
 import type { RepositoryDefinition, RepositoryManager } from '../repository/types.js';
 import {
@@ -131,9 +132,8 @@ export function createContainer(options: CreateContainerOptions): DependencyCont
   child.registerSingleton(TYPES.ProjectReportBuilder, ProjectReportBuilder);
   child.registerSingleton(TYPES.AnalysisSessionStore, AnalysisSessionStore);
 
-  child.register<RepositoryManager>(TYPES.RepositoryManager, {
-    useClass: GitRepositoryManager,
-  });
+  child.registerSingleton<RepositoryManager>(TYPES.RepositoryManager, GitRepositoryManager);
+  child.registerSingleton(TYPES.KnowledgeBaseReadinessChecker, KnowledgeBaseReadinessChecker);
 
   child.register<Indexer>(TYPES.Indexer, {
     useClass: RepositoryIndexer,

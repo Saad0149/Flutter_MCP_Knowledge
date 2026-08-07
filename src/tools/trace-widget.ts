@@ -1,5 +1,6 @@
 import { inject, injectable } from 'tsyringe';
 import { z } from 'zod';
+import type { KnowledgeBaseNotice, KnowledgeBaseReadinessChecker } from '../repository/knowledge-base-readiness.js';
 import type { KnowledgeStore, SymbolSearchHit } from '../store/types.js';
 import { TYPES } from '../types/tokens.js';
 import { toolFail, toolOk, type ToolResult } from './tool-result.js';
@@ -34,11 +35,16 @@ export interface TraceWidgetData {
     readonly file: string;
     readonly repository: string;
   }[];
+  readonly knowledgeBase?: KnowledgeBaseNotice;
 }
 
 @injectable()
 export class TraceWidgetHandler {
-  constructor(@inject(TYPES.KnowledgeStore) private readonly store: KnowledgeStore) {}
+  constructor(
+    @inject(TYPES.KnowledgeStore) private readonly store: KnowledgeStore,
+    @inject(TYPES.KnowledgeBaseReadinessChecker)
+    private readonly readiness?: KnowledgeBaseReadinessChecker,
+  ) {}
 
   async execute(input: TraceWidgetInput): Promise<ToolResult<TraceWidgetData>> {
     try {
@@ -55,6 +61,12 @@ export class TraceWidgetHandler {
       const repository = parsed.data.repository ?? 'flutter/flutter';
       const depth = parsed.data.depth ?? 3;
 
+      const readiness = await this.readiness?.check();
+      if (readiness?.state === 'building') {
+        return toolOk({ symbol, found: false, tree: null, related: [], knowledgeBase: readiness.notice });
+      }
+      const knowledgeBase = readiness?.state === 'degraded' ? readiness.notice : undefined;
+
       const root =
         this.store.getSymbolByName(symbol, { repositoryName: repository }) ??
         this.store.getSymbolByName(symbol);
@@ -65,6 +77,7 @@ export class TraceWidgetHandler {
           found: false,
           tree: null,
           related: [],
+          knowledgeBase,
         });
       }
 
@@ -76,6 +89,7 @@ export class TraceWidgetHandler {
         found: true,
         tree,
         related,
+        knowledgeBase,
       });
     } catch (error) {
       return toolFail(error);

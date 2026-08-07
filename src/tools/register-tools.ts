@@ -158,7 +158,8 @@ export function registerTools(server: McpServer, container: DependencyContainer)
 
   server.tool(
     'search_source',
-    'Search filenames and file contents across local official Flutter/Dart repositories (index-aware).',
+    'Search filenames and file contents across local official Flutter/Dart repositories (index-aware). ' +
+      'Auto-bootstraps (returns knowledgeBase.status="building") when no repos are cloned yet.',
     {
       query: SearchSourceInputSchema.shape.query,
       repository: SearchSourceInputSchema.shape.repository,
@@ -169,7 +170,8 @@ export function registerTools(server: McpServer, container: DependencyContainer)
 
   server.tool(
     'find_widget',
-    'Locate a Flutter widget by name using the SQLite index when available, else filesystem search.',
+    'Locate a Flutter widget by name using the SQLite index when available, else filesystem search. ' +
+      'Auto-bootstraps (returns knowledgeBase.status="building") when no repos are cloned yet.',
     {
       name: FindWidgetInputSchema.shape.name,
       repository: FindWidgetInputSchema.shape.repository,
@@ -190,7 +192,8 @@ export function registerTools(server: McpServer, container: DependencyContainer)
 
   server.tool(
     'explain_widget',
-    'Explain a widget from the local index (declaration, inheritance, documentation).',
+    'Explain a widget from the local index (declaration, inheritance, documentation). ' +
+      'Auto-bootstraps (returns knowledgeBase.status="building") when no repos are cloned yet.',
     {
       name: ExplainWidgetInputSchema.shape.name,
       repository: ExplainWidgetInputSchema.shape.repository,
@@ -200,7 +203,8 @@ export function registerTools(server: McpServer, container: DependencyContainer)
 
   server.tool(
     'search_docs',
-    'Search indexed documentation (guides, cookbook, migrations, CHANGELOGs).',
+    'Search indexed documentation (guides, cookbook, migrations, CHANGELOGs). ' +
+      'Auto-bootstraps (returns knowledgeBase.status="building") when no repos are cloned yet.',
     {
       query: SearchDocsInputSchema.shape.query,
       repository: SearchDocsInputSchema.shape.repository,
@@ -212,7 +216,8 @@ export function registerTools(server: McpServer, container: DependencyContainer)
 
   server.tool(
     'find_examples',
-    'Find examples related to a topic from samples and example/ directories.',
+    'Find examples related to a topic from samples and example/ directories. ' +
+      'Auto-bootstraps (returns knowledgeBase.status="building") when no repos are cloned yet.',
     {
       topic: FindExamplesInputSchema.shape.topic,
       limit: FindExamplesInputSchema.shape.limit,
@@ -222,7 +227,8 @@ export function registerTools(server: McpServer, container: DependencyContainer)
 
   server.tool(
     'find_tests',
-    'Find tests related to a symbol; widget tests are preferred when available.',
+    'Find tests related to a symbol; widget tests are preferred when available. ' +
+      'Auto-bootstraps (returns knowledgeBase.status="building") when no repos are cloned yet.',
     {
       symbol: FindTestsInputSchema.shape.symbol,
       repository: FindTestsInputSchema.shape.repository,
@@ -234,7 +240,8 @@ export function registerTools(server: McpServer, container: DependencyContainer)
 
   server.tool(
     'trace_widget',
-    'Trace widget/class inheritance and related symbols from the index.',
+    'Trace widget/class inheritance and related symbols from the index. ' +
+      'Auto-bootstraps (returns knowledgeBase.status="building") when no repos are cloned yet.',
     {
       symbol: TraceWidgetInputSchema.shape.symbol,
       repository: TraceWidgetInputSchema.shape.repository,
@@ -245,7 +252,8 @@ export function registerTools(server: McpServer, container: DependencyContainer)
 
   server.tool(
     'find_best_practice',
-    'Rank website, samples, and docs hits for a best-practice topic.',
+    'Rank website, samples, and docs hits for a best-practice topic. ' +
+      'Auto-bootstraps (returns knowledgeBase.status="building") when no repos are cloned yet.',
     {
       topic: FindBestPracticeInputSchema.shape.topic,
       limit: FindBestPracticeInputSchema.shape.limit,
@@ -255,7 +263,12 @@ export function registerTools(server: McpServer, container: DependencyContainer)
 
   server.tool(
     'review_project',
-    'Analyze once: executive health summary + sessionId. Pass sessionId to follow-up tools (no rescan). Use detail=full only when you need the entire report.',
+    'Analyze once: executive health summary + sessionId. Pass sessionId to follow-up tools (no rescan). ' +
+      'Use detail=full only when you need the entire report. topRisks/topActions each include sampleFiles ' +
+      '(up to 3 real file paths from that finding\'s evidence) so you can often decide whether to ' +
+      'investigate further without a round-trip to explore_finding. If the project has no Dart files, ' +
+      'returns a short { status: "blocked", reason: "no_dart_files", suggestedAction } instead of a hollow report. ' +
+      'Response includes bytes/approxTokens.',
     {
       path: ReviewProjectInputSchema.shape.path,
       limit: ReviewProjectInputSchema.shape.limit,
@@ -266,7 +279,11 @@ export function registerTools(server: McpServer, container: DependencyContainer)
 
   server.tool(
     'find_intended_behavior',
-    'How is this meant to be used? Joins widget tests, samples, migrations/cookbook/guides, and source.',
+    'How is this meant to be used? Joins widget tests, samples, migrations/cookbook/guides, and source. ' +
+      'If the knowledge base is empty or critically stale, auto-triggers a background clone and returns ' +
+      '{ status: "building", suggestedAction } immediately instead of blocking or serving nothing — retry ' +
+      'shortly or call repository_status. Partially-built indexes still return matches, with skipped ' +
+      'sources noted in knowledgeBase.skippedSources.',
     {
       topic: FindIntendedBehaviorInputSchema.shape.topic,
       limit: FindIntendedBehaviorInputSchema.shape.limit,
@@ -276,125 +293,178 @@ export function registerTools(server: McpServer, container: DependencyContainer)
 
   server.tool(
     'analyze_code_quality',
-    'Code quality view from a review_project session (or path). Slim findings + score — not a full rescan when sessionId is set.',
+    'Code quality view from a review_project session (or path). Slim findings + score — not a full rescan when sessionId is set. ' +
+      'Scope to a subset with pathGlob (e.g. "lib/features/admin/**") or feature (e.g. "admin") — filters the cached response, no rescan. ' +
+      'Response includes bytes/approxTokens so you can judge cost before requesting more.',
     {
       sessionId: AnalyzeCodeQualityInputObjectSchema.shape.sessionId,
       path: AnalyzeCodeQualityInputObjectSchema.shape.path,
       limit: AnalyzeCodeQualityInputObjectSchema.shape.limit,
+      pathGlob: AnalyzeCodeQualityInputObjectSchema.shape.pathGlob,
+      feature: AnalyzeCodeQualityInputObjectSchema.shape.feature,
     },
     async (args) => toMcpContent(await analyzeCodeQuality.execute(args)),
   );
 
   server.tool(
     'analyze_state_management',
-    'State management view from a review_project session (or path). Prefer sessionId to avoid rescanning.',
+    'State management view from a review_project session (or path). Prefer sessionId to avoid rescanning. ' +
+      'Scope to a subset with pathGlob or feature (response-side filter, no rescan).',
     {
       sessionId: AnalyzeStateManagementInputObjectSchema.shape.sessionId,
       path: AnalyzeStateManagementInputObjectSchema.shape.path,
       limit: AnalyzeStateManagementInputObjectSchema.shape.limit,
+      pathGlob: AnalyzeStateManagementInputObjectSchema.shape.pathGlob,
+      feature: AnalyzeStateManagementInputObjectSchema.shape.feature,
     },
     async (args) => toMcpContent(await analyzeStateManagement.execute(args)),
   );
 
   server.tool(
     'analyze_architecture',
-    'Architecture view from a review_project session (or path). Prefer sessionId to avoid rescanning.',
+    'Architecture view from a review_project session (or path). Prefer sessionId to avoid rescanning. ' +
+      'Scope to a subset with pathGlob or feature (response-side filter, no rescan).',
     {
       sessionId: AnalyzeArchitectureInputObjectSchema.shape.sessionId,
       path: AnalyzeArchitectureInputObjectSchema.shape.path,
       limit: AnalyzeArchitectureInputObjectSchema.shape.limit,
+      pathGlob: AnalyzeArchitectureInputObjectSchema.shape.pathGlob,
+      feature: AnalyzeArchitectureInputObjectSchema.shape.feature,
     },
     async (args) => toMcpContent(await analyzeArchitecture.execute(args)),
   );
 
   server.tool(
     'explain_finding',
-    'Mentor-style explanation for one finding. Prefer sessionId from review_project.',
+    'Mentor-style explanation for one finding (deduplicated evidence — no more repeated arrays). ' +
+      'Prefer sessionId from review_project. Use verbosity="brief" for fast triage (summary + fix + ' +
+      'top evidence only), "full" for deep investigation (forces related findings + official refs on). ' +
+      'Default "normal" matches prior full behavior. maxEvidence caps the evidence array (default 5, ' +
+      'reports how many were omitted). fields overrides verbosity with an explicit field allowlist. ' +
+      'Pass codes: string[] instead of findingCode to explain multiple findings in one call — returns ' +
+      '{ results: [...] }, one entry per code (unknown codes come back as a status:"not_found" entry, ' +
+      'not a failed batch). Response includes bytes/approxTokens.',
     {
       sessionId: ExplainFindingInputObjectSchema.shape.sessionId,
       path: ExplainFindingInputObjectSchema.shape.path,
       findingCode: ExplainFindingInputObjectSchema.shape.findingCode,
       findingId: ExplainFindingInputObjectSchema.shape.findingId,
+      codes: ExplainFindingInputObjectSchema.shape.codes,
+      verbosity: ExplainFindingInputObjectSchema.shape.verbosity,
+      maxEvidence: ExplainFindingInputObjectSchema.shape.maxEvidence,
+      includeRelated: ExplainFindingInputObjectSchema.shape.includeRelated,
+      fields: ExplainFindingInputObjectSchema.shape.fields,
+      includeOfficialRefs: ExplainFindingInputObjectSchema.shape.includeOfficialRefs,
     },
     async (args) => toMcpContent(await explainFinding.execute(args)),
   );
 
   server.tool(
     'explore_finding',
-    'Evidence for one finding (files, symbols, refactor). Prefer sessionId from review_project.',
+    'Evidence for one finding (files, symbols, refactor) — the source of the complete raw evidence ' +
+      'and cycle-path lists (explain_finding only summarizes these). Prefer sessionId from ' +
+      'review_project. Use verbosity="brief" for fast triage, "full" for deep investigation. ' +
+      'maxEvidence caps the evidence array specifically (default 5, with an omitted count); limit ' +
+      'continues to cap affectedFiles/affectedSymbols as before. Pass codes: string[] instead of ' +
+      'findingCode to explore multiple findings in one call — returns { results: [...] }. Response ' +
+      'includes bytes/approxTokens.',
     {
       sessionId: ExploreFindingInputObjectSchema.shape.sessionId,
       path: ExploreFindingInputObjectSchema.shape.path,
       findingCode: ExploreFindingInputObjectSchema.shape.findingCode,
       findingId: ExploreFindingInputObjectSchema.shape.findingId,
+      codes: ExploreFindingInputObjectSchema.shape.codes,
       limit: ExploreFindingInputObjectSchema.shape.limit,
+      verbosity: ExploreFindingInputObjectSchema.shape.verbosity,
+      maxEvidence: ExploreFindingInputObjectSchema.shape.maxEvidence,
+      includeRelated: ExploreFindingInputObjectSchema.shape.includeRelated,
+      fields: ExploreFindingInputObjectSchema.shape.fields,
+      includeOfficialRefs: ExploreFindingInputObjectSchema.shape.includeOfficialRefs,
     },
     async (args) => toMcpContent(await exploreFinding.execute(args)),
   );
 
   server.tool(
     'analyze_complexity',
-    'Complexity view from a review_project session (or path). Returns file-size distribution, estimated high-complexity files, and slim findings. Prefer sessionId to avoid rescanning.',
+    'Complexity view from a review_project session (or path). Returns file-size distribution, estimated high-complexity files, and slim findings. Prefer sessionId to avoid rescanning. ' +
+      'Scope to a subset with pathGlob or feature (response-side filter, no rescan).',
     {
       sessionId: AnalyzeComplexityInputObjectSchema.shape.sessionId,
       path: AnalyzeComplexityInputObjectSchema.shape.path,
       limit: AnalyzeComplexityInputObjectSchema.shape.limit,
+      pathGlob: AnalyzeComplexityInputObjectSchema.shape.pathGlob,
+      feature: AnalyzeComplexityInputObjectSchema.shape.feature,
     },
     async (args) => toMcpContent(await analyzeComplexity.execute(args)),
   );
 
   server.tool(
     'analyze_documentation',
-    'Documentation coverage view from a review_project session (or path). Returns widget/class doc ratios, README presence, and findings. Prefer sessionId to avoid rescanning.',
+    'Documentation coverage view from a review_project session (or path). Returns widget/class doc ratios, README presence, and findings. Prefer sessionId to avoid rescanning. ' +
+      'Scope to a subset with pathGlob or feature (response-side filter, no rescan).',
     {
       sessionId: AnalyzeDocumentationInputObjectSchema.shape.sessionId,
       path: AnalyzeDocumentationInputObjectSchema.shape.path,
       limit: AnalyzeDocumentationInputObjectSchema.shape.limit,
+      pathGlob: AnalyzeDocumentationInputObjectSchema.shape.pathGlob,
+      feature: AnalyzeDocumentationInputObjectSchema.shape.feature,
     },
     async (args) => toMcpContent(await analyzeDocumentation.execute(args)),
   );
 
   server.tool(
     'analyze_testing',
-    'Testing coverage view from a review_project session (or path). Returns test/lib ratios, test type counts, and untested features. Prefer sessionId to avoid rescanning.',
+    'Testing coverage view from a review_project session (or path). Returns test/lib ratios, test type counts, and untested features. Prefer sessionId to avoid rescanning. ' +
+      'Scope to a subset with pathGlob or feature (response-side filter, no rescan).',
     {
       sessionId: AnalyzeTestingInputObjectSchema.shape.sessionId,
       path: AnalyzeTestingInputObjectSchema.shape.path,
       limit: AnalyzeTestingInputObjectSchema.shape.limit,
+      pathGlob: AnalyzeTestingInputObjectSchema.shape.pathGlob,
+      feature: AnalyzeTestingInputObjectSchema.shape.feature,
     },
     async (args) => toMcpContent(await analyzeTesting.execute(args)),
   );
 
   server.tool(
     'analyze_dependencies',
-    'Dependency health view from a review_project session (or path). Returns layer violations, circular cycles, and slim findings. Use detail=full to include full violation arrays. Prefer sessionId to avoid rescanning.',
+    'Dependency health view from a review_project session (or path). Returns layer violations, circular cycles, and slim findings. Use detail=full to include full violation arrays. Prefer sessionId to avoid rescanning. ' +
+      'Scope to a subset with pathGlob or feature (response-side filter, no rescan).',
     {
       sessionId: AnalyzeDependenciesInputObjectSchema.shape.sessionId,
       path: AnalyzeDependenciesInputObjectSchema.shape.path,
       limit: AnalyzeDependenciesInputObjectSchema.shape.limit,
       detail: AnalyzeDependenciesInputObjectSchema.shape.detail,
+      pathGlob: AnalyzeDependenciesInputObjectSchema.shape.pathGlob,
+      feature: AnalyzeDependenciesInputObjectSchema.shape.feature,
     },
     async (args) => toMcpContent(await analyzeDependencies.execute(args)),
   );
 
   server.tool(
     'analyze_performance',
-    'Performance view from a review_project session (or path). Returns build method sizes, setState issues, and animation controller leaks. Prefer sessionId to avoid rescanning.',
+    'Performance view from a review_project session (or path). Returns build method sizes, setState issues, and animation controller leaks. Prefer sessionId to avoid rescanning. ' +
+      'Scope to a subset with pathGlob or feature (response-side filter, no rescan).',
     {
       sessionId: AnalyzePerformanceInputObjectSchema.shape.sessionId,
       path: AnalyzePerformanceInputObjectSchema.shape.path,
       limit: AnalyzePerformanceInputObjectSchema.shape.limit,
+      pathGlob: AnalyzePerformanceInputObjectSchema.shape.pathGlob,
+      feature: AnalyzePerformanceInputObjectSchema.shape.feature,
     },
     async (args) => toMcpContent(await analyzePerformance.execute(args)),
   );
 
   server.tool(
     'analyze_accessibility',
-    'Accessibility view from a review_project session (or path). Returns semantics widget counts, tooltip usage, and missing semantic labels. Prefer sessionId to avoid rescanning.',
+    'Accessibility view from a review_project session (or path). Returns semantics widget counts, tooltip usage, and missing semantic labels. Prefer sessionId to avoid rescanning. ' +
+      'Scope to a subset with pathGlob or feature (response-side filter, no rescan).',
     {
       sessionId: AnalyzeAccessibilityInputObjectSchema.shape.sessionId,
       path: AnalyzeAccessibilityInputObjectSchema.shape.path,
       limit: AnalyzeAccessibilityInputObjectSchema.shape.limit,
+      pathGlob: AnalyzeAccessibilityInputObjectSchema.shape.pathGlob,
+      feature: AnalyzeAccessibilityInputObjectSchema.shape.feature,
     },
     async (args) => toMcpContent(await analyzeAccessibility.execute(args)),
   );

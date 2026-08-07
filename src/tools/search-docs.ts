@@ -1,5 +1,6 @@
 import { inject, injectable } from 'tsyringe';
 import { z } from 'zod';
+import type { KnowledgeBaseNotice, KnowledgeBaseReadinessChecker } from '../repository/knowledge-base-readiness.js';
 import type { DocKind, KnowledgeStore } from '../store/types.js';
 import { TYPES } from '../types/tokens.js';
 import { toolFail, toolOk, type ToolResult } from './tool-result.js';
@@ -28,11 +29,16 @@ export interface SearchDocsData {
   readonly query: string;
   readonly totalMatches: number;
   readonly results: readonly SearchDocsHit[];
+  readonly knowledgeBase?: KnowledgeBaseNotice;
 }
 
 @injectable()
 export class SearchDocsHandler {
-  constructor(@inject(TYPES.KnowledgeStore) private readonly store: KnowledgeStore) {}
+  constructor(
+    @inject(TYPES.KnowledgeStore) private readonly store: KnowledgeStore,
+    @inject(TYPES.KnowledgeBaseReadinessChecker)
+    private readonly readiness?: KnowledgeBaseReadinessChecker,
+  ) {}
 
   async execute(input: SearchDocsInput): Promise<ToolResult<SearchDocsData>> {
     try {
@@ -44,6 +50,17 @@ export class SearchDocsHandler {
           details: parsed.error.flatten(),
         });
       }
+
+      const readiness = await this.readiness?.check();
+      if (readiness?.state === 'building') {
+        return toolOk({
+          query: parsed.data.query,
+          totalMatches: 0,
+          results: [],
+          knowledgeBase: readiness.notice,
+        });
+      }
+      const knowledgeBase = readiness?.state === 'degraded' ? readiness.notice : undefined;
 
       const hits = this.store.findDocs({
         query: parsed.data.query,
@@ -63,6 +80,7 @@ export class SearchDocsHandler {
           docKind: hit.docKind,
           snippet: hit.chunk.slice(0, 280),
         })),
+        knowledgeBase,
       });
     } catch (error) {
       return toolFail(error);

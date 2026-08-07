@@ -1,5 +1,6 @@
 import { inject, injectable } from 'tsyringe';
 import { z } from 'zod';
+import type { KnowledgeBaseNotice, KnowledgeBaseReadinessChecker } from '../repository/knowledge-base-readiness.js';
 import type { KnowledgeStore } from '../store/types.js';
 import { TYPES } from '../types/tokens.js';
 import { toolFail, toolOk, type ToolResult } from './tool-result.js';
@@ -24,11 +25,16 @@ export interface FindExamplesData {
   readonly topic: string;
   readonly totalMatches: number;
   readonly results: readonly FindExamplesHit[];
+  readonly knowledgeBase?: KnowledgeBaseNotice;
 }
 
 @injectable()
 export class FindExamplesHandler {
-  constructor(@inject(TYPES.KnowledgeStore) private readonly store: KnowledgeStore) {}
+  constructor(
+    @inject(TYPES.KnowledgeStore) private readonly store: KnowledgeStore,
+    @inject(TYPES.KnowledgeBaseReadinessChecker)
+    private readonly readiness?: KnowledgeBaseReadinessChecker,
+  ) {}
 
   async execute(input: FindExamplesInput): Promise<ToolResult<FindExamplesData>> {
     try {
@@ -43,6 +49,13 @@ export class FindExamplesHandler {
 
       const topic = parsed.data.topic.trim();
       const limit = parsed.data.limit ?? 30;
+
+      const readiness = await this.readiness?.check();
+      if (readiness?.state === 'building') {
+        return toolOk({ topic, totalMatches: 0, results: [], knowledgeBase: readiness.notice });
+      }
+      const knowledgeBase = readiness?.state === 'degraded' ? readiness.notice : undefined;
+
       const results: FindExamplesHit[] = [];
 
       const symbols = this.store.findSymbols({
@@ -111,6 +124,7 @@ export class FindExamplesHandler {
         topic,
         totalMatches: results.length,
         results: results.slice(0, limit),
+        knowledgeBase,
       });
     } catch (error) {
       return toolFail(error);
