@@ -1,6 +1,6 @@
 {
   "name": "flutter-knowledge-mcp",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "MCP server exposing a 9-analyzer Flutter/Dart static analysis engine (code quality, architecture, state management, complexity, dependencies, performance, documentation, testing, accessibility) plus official Flutter/Dart knowledge search — for Cursor, Claude Code, and other MCP clients.",
   "type": "module",
   "main": "dist/index.js",
