@@ -145,22 +145,6 @@ export class EvidenceEngine {
       }
     }
 
-    if (finding.code === 'CircularDependencies') {
-      for (const cycle of finding.evidence.slice(0, 5)) {
-        items.push({
-          file: cycle.split(' -> ')[0] ?? null,
-          line: null,
-          column: null,
-          symbol: null,
-          astNode: 'import_cycle',
-          analyzer: 'ImportGraph',
-          confidence,
-          source: 'import_graph',
-          detail: cycle,
-        });
-      }
-    }
-
     return dedupeEvidence(items);
   }
 }
@@ -233,6 +217,26 @@ function parseEvidenceString(
       column: null,
       symbol: cls[1]!,
       astNode: 'class',
+      analyzer,
+      confidence,
+      source,
+      detail: raw,
+    };
+  }
+
+  // "path/a.dart → path/b.dart" or a chain "path/a.dart → path/b.dart → path/a.dart",
+  // optionally trailed by "(rule text)". Used by LayerViolations (from → to (rule))
+  // and CircularDependencies (a chain of files back to the start) — general because
+  // any finding whose evidence names a violating/cyclic import edge this way benefits,
+  // not just those two codes.
+  const arrowChain = /^(\S+\.dart)\s+→\s+\S/.exec(raw);
+  if (arrowChain) {
+    return {
+      file: arrowChain[1]!,
+      line: null,
+      column: null,
+      symbol: null,
+      astNode: 'import',
       analyzer,
       confidence,
       source,

@@ -7,7 +7,7 @@ import type {
   ProjectAnalysisEngine,
   ProjectSnapshot,
 } from '../types.js';
-import { finding } from './finding-factory.js';
+import { astOrFallback, finding } from './finding-factory.js';
 
 export interface CodeQualityFacts {
   readonly dartFileCount: number;
@@ -176,6 +176,7 @@ export class CodeQualityAnalyzer implements ProjectAnalysisEngine<CodeQualityFac
             officialReference: this.refs.lookupDoc('mixins'),
             dependsOnAst: true,
             confidence: 0.95,
+            basis: astOrFallback(ast),
             scoreImpact: 2,
             whyItMatters: 'Mixins enable shared behavior without deep inheritance trees.',
           },
@@ -198,6 +199,7 @@ export class CodeQualityAnalyzer implements ProjectAnalysisEngine<CodeQualityFac
             officialReference: this.refs.lookupDoc('extension methods'),
             dependsOnAst: true,
             confidence: 0.95,
+            basis: astOrFallback(ast),
             scoreImpact: 2,
           },
           ast,
@@ -221,6 +223,7 @@ export class CodeQualityAnalyzer implements ProjectAnalysisEngine<CodeQualityFac
             source: 'heuristic',
             dependsOnAst: true,
             confidence: 0.85,
+            basis: astOrFallback(ast),
             scoreImpact: -2,
             whyItMatters:
               'Large screens are often fine; treat LOC as a triage signal, not an automatic defect.',
@@ -252,6 +255,7 @@ export class CodeQualityAnalyzer implements ProjectAnalysisEngine<CodeQualityFac
               0.95,
               godClassDetails.reduce((s, g) => s + g.confidence, 0) / godClassDetails.length,
             ),
+            basis: astOrFallback(ast),
             scoreImpact: -Math.min(15, 6 + Math.floor(godClassDetails.length / 5)),
             whyItMatters:
               'Types that mix many methods, fields, and dependencies concentrate change risk.',
@@ -275,6 +279,7 @@ export class CodeQualityAnalyzer implements ProjectAnalysisEngine<CodeQualityFac
             officialReference: this.refs.lookupDoc('composition'),
             dependsOnAst: true,
             confidence: 0.7,
+            basis: astOrFallback(ast),
             scoreImpact: -6,
           },
           ast,
@@ -304,6 +309,7 @@ export class CodeQualityAnalyzer implements ProjectAnalysisEngine<CodeQualityFac
             officialReference: this.refs.lookupSymbol('debugPrint'),
             source: 'filesystem',
             confidence: 0.95,
+            basis: 'pattern',
             scoreImpact: -4,
           },
           ast,
@@ -325,6 +331,7 @@ export class CodeQualityAnalyzer implements ProjectAnalysisEngine<CodeQualityFac
             officialReference: this.refs.lookupSymbol('ElevatedButton'),
             source: 'filesystem',
             confidence: 0.98,
+            basis: 'pattern',
             scoreImpact: -8,
             whyItMatters: 'Legacy buttons were removed from Material; apps must migrate to compile on modern Flutter.',
           },
@@ -347,6 +354,7 @@ export class CodeQualityAnalyzer implements ProjectAnalysisEngine<CodeQualityFac
             officialReference: this.refs.lookupDoc('const constructors'),
             source: 'heuristic',
             confidence: 0.65,
+            basis: 'pattern',
             scoreImpact: -5,
           },
           ast,
@@ -374,6 +382,7 @@ export class CodeQualityAnalyzer implements ProjectAnalysisEngine<CodeQualityFac
             officialReference: this.refs.lookupDoc('class modifiers'),
             source: 'filesystem',
             confidence: 0.92,
+            basis: 'pattern',
             scoreImpact: 3,
           },
           ast,
@@ -395,6 +404,7 @@ export class CodeQualityAnalyzer implements ProjectAnalysisEngine<CodeQualityFac
             officialReference: this.refs.lookupDoc('patterns'),
             source: 'heuristic',
             confidence: 0.75,
+            basis: 'pattern',
             scoreImpact: 2,
           },
           ast,
@@ -418,6 +428,7 @@ export class CodeQualityAnalyzer implements ProjectAnalysisEngine<CodeQualityFac
           recommendedFix: null,
           source: 'heuristic',
           confidence: 0.7,
+          basis: 'pattern',
         },
         ast,
       ),

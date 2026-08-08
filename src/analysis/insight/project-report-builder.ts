@@ -296,15 +296,27 @@ export class ProjectReportBuilder {
   }
 }
 
-function deriveFindingPriority(
+export function deriveFindingPriority(
   f: AnalysisFinding,
 ): NonNullable<AnalysisFinding['priority']> {
   if (f.severity === 'info' || f.severity === 'positive') return 'info';
   const impact = Math.abs(f.scoreImpact ?? 0);
-  if (impact >= 12 && f.confidence >= 0.9) return 'critical';
+  if (impact >= 12 && f.confidence >= 0.9) {
+    // A finding that can't cite a single file isn't presentable with 'critical'
+    // authority — even at max impact/confidence, it's an aggregate count with
+    // nothing to point an agent or developer at. Runs after evidence
+    // enrichment, so evidenceItems are already populated here.
+    return hasLocatableFileEvidence(f) ? 'critical' : 'high';
+  }
   if (impact >= 8) return 'high';
   if (f.severity === 'warning') return 'medium';
   return 'medium';
+}
+
+/** Same "does this finding have a real file to point at" check sampleFilesFor uses. */
+function hasLocatableFileEvidence(f: AnalysisFinding): boolean {
+  if (f.file) return true;
+  return (f.evidenceItems ?? []).some((item) => Boolean(item.file));
 }
 
 function buildHealthSections(input: {

@@ -52,7 +52,7 @@ export type ExploreFindingInput = z.infer<typeof ExploreFindingInputObjectSchema
 export interface ExploreFindingResult {
   readonly finding: Pick<
     AnalysisFinding,
-    'id' | 'code' | 'title' | 'severity' | 'confidence' | 'description' | 'priority'
+    'id' | 'code' | 'title' | 'severity' | 'confidence' | 'basis' | 'description' | 'priority'
   >;
   readonly evidence: readonly EvidenceItem[];
   readonly evidenceOmittedCount?: number;
@@ -225,6 +225,7 @@ export class ExploreFindingHandler {
         title: match.title,
         severity: match.severity,
         confidence: match.confidence,
+        basis: match.basis,
         description: match.description,
         priority: match.priority,
       },

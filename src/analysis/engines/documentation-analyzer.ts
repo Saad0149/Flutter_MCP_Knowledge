@@ -7,7 +7,7 @@ import type {
   ProjectAnalysisEngine,
   ProjectSnapshot,
 } from '../types.js';
-import { finding } from './finding-factory.js';
+import { astOrFallback, finding } from './finding-factory.js';
 
 export interface DocumentationFacts {
   readonly publicWidgetCount: number;
@@ -109,6 +109,7 @@ export class DocumentationAnalyzer implements ProjectAnalysisEngine<Documentatio
             officialReference: this.refs.lookupDoc('documentation'),
             source: ast.source,
             confidence: ast.source === 'dart_analyzer' ? 0.92 : 0.7,
+            basis: astOrFallback(ast),
             scoreImpact: ratio > 0.5 ? -12 : -6,
             whyItMatters: 'Missing docs make it impossible for IDE to show widget purpose on hover; slows onboarding.',
           },
@@ -128,6 +129,7 @@ export class DocumentationAnalyzer implements ProjectAnalysisEngine<Documentatio
             recommendedFix: null,
             source: ast.source,
             confidence: ast.source === 'dart_analyzer' ? 0.92 : 0.7,
+            basis: astOrFallback(ast),
             scoreImpact: 10,
           },
           ast,
@@ -148,6 +150,7 @@ export class DocumentationAnalyzer implements ProjectAnalysisEngine<Documentatio
             recommendedFix: 'Add analysis_options.yaml including package:flutter_lints/flutter.yaml or package:lints/recommended.yaml.',
             source: 'filesystem',
             confidence: 1.0,
+            basis: 'ast',
             scoreImpact: -8,
           },
           ast,
@@ -166,6 +169,7 @@ export class DocumentationAnalyzer implements ProjectAnalysisEngine<Documentatio
             recommendedFix: null,
             source: 'filesystem',
             confidence: 1.0,
+            basis: 'ast',
             scoreImpact: 8,
           },
           ast,
@@ -186,6 +190,7 @@ export class DocumentationAnalyzer implements ProjectAnalysisEngine<Documentatio
             recommendedFix: 'Add a meaningful description to pubspec.yaml.',
             source: 'filesystem',
             confidence: 0.95,
+            basis: 'ast',
             scoreImpact: -2,
           },
           ast,
@@ -206,6 +211,7 @@ export class DocumentationAnalyzer implements ProjectAnalysisEngine<Documentatio
             recommendedFix: 'Add README.md with setup instructions, architecture overview, and contribution guide.',
             source: 'filesystem',
             confidence: 0.9,
+            basis: 'ast',
             scoreImpact: -5,
           },
           ast,
@@ -226,6 +232,7 @@ export class DocumentationAnalyzer implements ProjectAnalysisEngine<Documentatio
             recommendedFix: 'Add inline comments for non-obvious business rules, workarounds, and invariants.',
             source: 'filesystem',
             confidence: 0.8,
+            basis: 'pattern',
             scoreImpact: -2,
           },
           ast,

@@ -33,6 +33,7 @@ function makeFinding(overrides: Partial<AnalysisFinding> = {}): AnalysisFinding 
     recommendedFix: null,
     confidence: 0.9,
     source: 'heuristic',
+    basis: 'pattern',
     ...overrides,
   };
 }

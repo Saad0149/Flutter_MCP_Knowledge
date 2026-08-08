@@ -6,6 +6,7 @@ export type {
   ArchitectureMatch,
   AstMeta,
   EvidenceItem,
+  FindingBasis,
   FindingCategory,
   FindingSeverity,
   HealthScore,

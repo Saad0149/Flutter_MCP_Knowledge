@@ -180,6 +180,7 @@ function baseFinding(overrides: Partial<AnalysisFinding> & Pick<AnalysisFinding,
     evidence: [],
     recommendedFix: null,
     source: 'heuristic',
+    basis: 'pattern',
     ...overrides,
   };
 }

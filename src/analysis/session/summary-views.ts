@@ -1,4 +1,4 @@
-import type { AnalysisFinding, HealthScore, PriorityAction } from '../types.js';
+import type { AnalysisFinding, FindingBasis, HealthScore, PriorityAction } from '../types.js';
 import type { ProjectAnalysisReport } from '../insight/project-report-builder.js';
 import { hasEvidenceFor, sampleFilesFor } from '../../tools/tool-response-helpers.js';
 
@@ -12,11 +12,31 @@ export interface TopRiskCard {
    * show", not a gap).
    */
   readonly hasEvidence: boolean;
+  /**
+   * False when the finding has evidence (hasEvidence may still be true) but
+   * none of it names a real file — e.g. an aggregate count like "113
+   * problematic setState sites" with no per-instance location tracked
+   * anywhere in the analyzer. Equivalent to sampleFiles.length > 0. A finding
+   * presented here with hasLocatableEvidence:false is asserting a risk it
+   * cannot point a reader at — treat it with appropriately less authority
+   * than one that can.
+   */
+  readonly hasLocatableEvidence: boolean;
+  /**
+   * WHY the confidence above is what it is — 'pattern' means "this is
+   * inherently a heuristic check, expected"; 'heuristic_fallback' means
+   * "this specific finding needed real AST data and didn't get it this
+   * scan" (worth a check_environment call); 'ast' means grounded in a
+   * deterministic structural fact. See FindingBasis.
+   */
+  readonly basis: FindingBasis;
 }
 
 export interface TopActionCard extends PriorityAction {
   readonly sampleFiles: readonly string[];
   readonly hasEvidence: boolean;
+  readonly hasLocatableEvidence: boolean;
+  readonly basis?: FindingBasis;
 }
 
 /** Compact finding card for chat — no nested evidence dumps. */
@@ -27,6 +47,8 @@ export interface FindingCard {
   readonly severity: AnalysisFinding['severity'];
   readonly category: AnalysisFinding['category'];
   readonly confidence: number;
+  /** WHY confidence is what it is — see FindingBasis. */
+  readonly basis: FindingBasis;
   readonly priority?: AnalysisFinding['priority'];
   readonly scoreImpact?: number;
 }
@@ -92,6 +114,7 @@ export function toFindingCard(f: AnalysisFinding): FindingCard {
     severity: f.severity,
     category: f.category,
     confidence: f.confidence,
+    basis: f.basis,
     priority: f.priority,
     scoreImpact: f.scoreImpact,
   };
@@ -136,11 +159,16 @@ function topRiskCards(findings: readonly AnalysisFinding[], max: number): TopRis
     .filter((f) => f.severity === 'negative' || f.severity === 'warning')
     .sort((a, b) => severityRank(b.severity) * b.confidence - severityRank(a.severity) * a.confidence)
     .slice(0, max)
-    .map((f) => ({
-      title: `${f.title} (confidence ${(f.confidence * 100).toFixed(0)}%, source=${f.source})`,
-      sampleFiles: sampleFilesFor(f),
-      hasEvidence: hasEvidenceFor(f),
-    }));
+    .map((f) => {
+      const sampleFiles = sampleFilesFor(f);
+      return {
+        title: `${f.title} (confidence ${(f.confidence * 100).toFixed(0)}%, basis=${f.basis}, source=${f.source})`,
+        sampleFiles,
+        hasEvidence: hasEvidenceFor(f),
+        hasLocatableEvidence: sampleFiles.length > 0,
+        basis: f.basis,
+      };
+    });
 }
 
 function topActionCards(
@@ -149,11 +177,17 @@ function topActionCards(
   max: number,
 ): TopActionCard[] {
   const byCode = new Map(findings.map((f) => [f.code, f]));
-  return actions.slice(0, max).map((action) => ({
-    ...action,
-    sampleFiles: sampleFilesFor(byCode.get(action.findingCode)),
-    hasEvidence: hasEvidenceFor(byCode.get(action.findingCode)),
-  }));
+  return actions.slice(0, max).map((action) => {
+    const finding = byCode.get(action.findingCode);
+    const sampleFiles = sampleFilesFor(finding);
+    return {
+      ...action,
+      sampleFiles,
+      hasEvidence: hasEvidenceFor(finding),
+      hasLocatableEvidence: sampleFiles.length > 0,
+      basis: finding?.basis,
+    };
+  });
 }
 
 export function buildReviewSummary(

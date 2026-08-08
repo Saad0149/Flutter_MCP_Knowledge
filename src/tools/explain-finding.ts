@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type {
   AnalysisFinding,
   EvidenceItem,
+  FindingBasis,
   OfficialReference,
   RecommendationDifficulty,
   RecommendationPriority,
@@ -81,6 +82,8 @@ export interface ExplainFindingResult {
   readonly relatedFindings?: readonly { readonly code: string; readonly title: string }[];
   readonly priority: RecommendationPriority;
   readonly confidence: number;
+  /** WHY confidence is what it is — see FindingBasis. */
+  readonly basis: FindingBasis;
 }
 
 export interface ExplainFindingNotFound {
@@ -242,6 +245,7 @@ export class ExplainFindingHandler {
       relatedFindings: shape.includeRelated ? explanation.relatedFindings : undefined,
       priority: rec.priority,
       confidence: explanation.confidence,
+      basis: match.basis,
     };
 
     const fieldsToKeep = shape.fields ?? (shape.verbosity === 'brief' ? BRIEF_FIELDS : undefined);

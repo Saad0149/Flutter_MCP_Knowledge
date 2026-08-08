@@ -7,7 +7,7 @@ import type {
   ProjectAnalysisEngine,
   ProjectSnapshot,
 } from '../types.js';
-import { finding } from './finding-factory.js';
+import { astOrFallback, finding } from './finding-factory.js';
 
 export type DetectedStateApproach =
   | 'bloc'
@@ -263,6 +263,7 @@ export class StateManagementAnalyzer implements ProjectAnalysisEngine<StateManag
           source: dependencySignals.length > 0 ? 'pubspec' : 'heuristic',
           confidence: dependencySignals.length > 0 ? 0.98 : 0.75,
           dependsOnAst: dependencySignals.length === 0,
+          basis: dependencySignals.length > 0 ? 'ast' : astOrFallback(ast),
           whyItMatters:
             'The primary state approach dictates where business logic lives and how features scale.',
         },
@@ -285,6 +286,7 @@ export class StateManagementAnalyzer implements ProjectAnalysisEngine<StateManag
               'Standardize on one primary approach per feature; allow temporary coexistence only across feature boundaries during migration.',
             source: 'filesystem',
             confidence: 0.88,
+            basis: 'pattern',
             scoreImpact: -Math.min(12, 4 + featuresWithMixedLibraries.length * 2),
             whyItMatters:
               'Same-feature mixed libraries force developers to reason about multiple patterns in one module.',
@@ -306,6 +308,7 @@ export class StateManagementAnalyzer implements ProjectAnalysisEngine<StateManag
             recommendedFix: 'Prefer converging on one primary approach over time.',
             source: 'pubspec',
             confidence: 0.8,
+            basis: 'pattern',
             scoreImpact: -3,
           },
           ast,
@@ -333,6 +336,7 @@ export class StateManagementAnalyzer implements ProjectAnalysisEngine<StateManag
             officialReference: this.refs.lookupSymbol('StatefulWidget'),
             source: 'heuristic',
             confidence: 0.78,
+            basis: 'pattern',
             scoreImpact: -Math.min(12, 4 + Math.floor(problematicSetStateSites / 10)),
             whyItMatters:
               'Business and cross-widget state in setState hurts testability and rebuild control; local toggles are fine.',
@@ -356,6 +360,7 @@ export class StateManagementAnalyzer implements ProjectAnalysisEngine<StateManag
             recommendedFix: null,
             source: 'heuristic',
             confidence: 0.8,
+            basis: 'pattern',
             scoreImpact: 4,
           },
           ast,
@@ -380,6 +385,7 @@ export class StateManagementAnalyzer implements ProjectAnalysisEngine<StateManag
             officialReference: this.refs.lookupSymbol('TextEditingController'),
             source: 'heuristic',
             confidence: 0.7,
+            basis: 'pattern',
             scoreImpact: -10,
             whyItMatters: 'Undisposed controllers leak listeners and hold onto Element trees.',
           },
@@ -403,6 +409,7 @@ export class StateManagementAnalyzer implements ProjectAnalysisEngine<StateManag
             recommendedFix: null,
             source: 'heuristic',
             confidence: 0.75,
+            basis: 'pattern',
             scoreImpact: 5,
           },
           ast,
@@ -428,6 +435,7 @@ export class StateManagementAnalyzer implements ProjectAnalysisEngine<StateManag
             officialReference: this.refs.lookupDoc('architecture'),
             source: 'heuristic',
             confidence: 0.72,
+            basis: 'pattern',
             scoreImpact: -12,
             whyItMatters:
               'Presentation that owns IO is hard to test and hard to reuse across platforms or entry points.',
@@ -451,6 +459,7 @@ export class StateManagementAnalyzer implements ProjectAnalysisEngine<StateManag
             officialReference: this.refs.lookupSymbol('ChangeNotifier'),
             dependsOnAst: true,
             confidence: 0.8,
+            basis: astOrFallback(ast),
             scoreImpact: -3,
           },
           ast,
@@ -473,6 +482,7 @@ export class StateManagementAnalyzer implements ProjectAnalysisEngine<StateManag
           recommendedFix: null,
           source: 'filesystem',
           confidence: 0.85,
+          basis: 'pattern',
         },
         ast,
       ),

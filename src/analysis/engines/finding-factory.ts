@@ -1,7 +1,7 @@
 /**
  * Confidence helpers shared by analyzer engines.
  */
-import type { AnalysisFinding, AnalysisSource, AstMeta, OfficialReference } from '../types.js';
+import type { AnalysisFinding, AnalysisSource, AstMeta, FindingBasis, OfficialReference } from '../types.js';
 import { withAstConfidence } from '../types.js';
 
 export type FindingDraft = Omit<AnalysisFinding, 'confidence' | 'source'> & {
@@ -29,6 +29,7 @@ export function finding(
     recommendedFix: draft.recommendedFix,
     confidence: withAstConfidence(base, astMeta, dependsOnAst),
     source: dependsOnAst && source === 'filesystem' ? astMeta.source : source,
+    basis: draft.basis,
     whyItMatters: draft.whyItMatters,
     scoreImpact: draft.scoreImpact,
     file: draft.file,
@@ -57,6 +58,20 @@ function defaultBaseConfidence(source: AnalysisSource): number {
     default:
       return 0.8;
   }
+}
+
+/**
+ * For findings whose correctness depends on the real Dart AST's symbol table
+ * (docstrings, extends clauses, class/widget membership) rather than raw
+ * file content or import statements: 'ast' when this scan actually had the
+ * Dart AST available, 'heuristic_fallback' when this scan fell back to the
+ * regex-based symbol extractor. Findings that don't read the symbol table
+ * (import-graph, pubspec, filesystem, or pure text-pattern checks) should
+ * NOT use this — they're always 'ast' or always 'pattern' regardless of
+ * astMeta.source.
+ */
+export function astOrFallback(astMeta: AstMeta): FindingBasis {
+  return astMeta.source === 'dart_analyzer' ? 'ast' : 'heuristic_fallback';
 }
 
 function collectRefs(draft: FindingDraft): OfficialReference[] {

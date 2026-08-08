@@ -27,6 +27,28 @@ export type AnalysisSource =
   | 'pubspec'
   | 'import_graph';
 
+/**
+ * WHY a finding's confidence is what it is — orthogonal to the confidence
+ * number itself, and easy to conflate with astMeta.source's project-level
+ * "degraded scan" signal (they answer different questions):
+ *
+ * - 'ast': grounded in a deterministic structural fact — import edges,
+ *   the symbol table (when the real Dart AST was available), pubspec
+ *   contents, or plain file/dir existence. Not a probabilistic estimate.
+ * - 'pattern': an inherently regex/text-heuristic check by design — e.g.
+ *   counting `setState(` call sites or `print(` usage. Works the same way
+ *   and carries the same meaning regardless of whether the Dart AST was
+ *   available for this scan; a 0.65-confidence pattern check on a fully
+ *   AST-available project is not "degraded," it's just what that check is.
+ * - 'heuristic_fallback': this specific finding normally reads the real
+ *   Dart AST's symbol table (docstrings, extends clauses, class/widget
+ *   membership), but for THIS scan astMeta.source was 'heuristic', so it
+ *   was computed from the regex-based fallback extractor instead. This is
+ *   the actual "whole scan degraded" case that should prompt a
+ *   check_environment call — 'pattern' findings should not.
+ */
+export type FindingBasis = 'ast' | 'pattern' | 'heuristic_fallback';
+
 export type KnowledgeAuthority = 'official' | 'community' | 'generated';
 
 export interface OfficialReference {
@@ -75,6 +97,8 @@ export interface AnalysisFinding {
   readonly recommendedFix: string | null;
   readonly confidence: number;
   readonly source: AnalysisSource;
+  /** WHY this finding's confidence is what it is — see FindingBasis. */
+  readonly basis: FindingBasis;
   readonly whyItMatters?: string;
   readonly scoreImpact?: number;
   readonly file?: string;
