@@ -6,8 +6,8 @@ import { TYPES } from '../types/tokens.js';
 import { toolFail, toolOk, type ToolResult } from './tool-result.js';
 
 export const ExplainWidgetInputSchema = z.object({
-  name: z.string().min(1).describe('Widget class name'),
-  repository: z.string().min(1).optional(),
+  name: z.string().min(1).max(200).describe('Widget class name'),
+  repository: z.string().min(1).max(200).optional(),
 });
 
 export type ExplainWidgetInput = z.infer<typeof ExplainWidgetInputSchema>;

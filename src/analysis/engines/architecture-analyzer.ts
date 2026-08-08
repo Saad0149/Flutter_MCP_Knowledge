@@ -7,6 +7,7 @@ import type {
   ProjectAnalysisEngine,
   ProjectSnapshot,
 } from '../types.js';
+import { detectCycles } from './detect-cycles.js';
 import { finding } from './finding-factory.js';
 
 export type DetectedArchitecture =
@@ -301,45 +302,14 @@ export class ArchitectureAnalyzer implements ProjectAnalysisEngine<ArchitectureF
       );
     }
 
-    if (circularDependencies.length > 0) {
-      findings.push(
-        finding(
-          {
-            severity: 'negative',
-            category: 'dependency',
-            code: 'CircularDependencies',
-            title: 'Circular import dependencies detected',
-            description: 'Cycles hinder testing and feature ownership.',
-            evidence: circularDependencies.slice(0, 10),
-            recommendedFix:
-              'Break cycles with interfaces, extracting shared types, or reordering modules.',
-            source: 'import_graph',
-            confidence: 0.9,
-            scoreImpact: -15,
-            whyItMatters: 'Cycles make compile-order fragile and prevent clean feature extraction.',
-          },
-          ast,
-        ),
-      );
-    } else if (snapshot.importEdges.length > 0) {
-      findings.push(
-        finding(
-          {
-            severity: 'positive',
-            category: 'dependency',
-            code: 'NoCircularDeps',
-            title: 'No circular dependencies detected in import graph',
-            description: 'Best-effort cycle detection on relative/package-self imports found none.',
-            evidence: [`edges analyzed=${snapshot.importEdges.length}`],
-            recommendedFix: null,
-            source: 'import_graph',
-            confidence: 0.88,
-            scoreImpact: 6,
-          },
-          ast,
-        ),
-      );
-    }
+    // NOTE: circular-import detection intentionally does NOT emit a finding
+    // here. DependencyAnalyzer owns the 'CircularDependencies' finding
+    // (dynamic count-based title) — both analyzers used to run their own
+    // copy-pasted cycle detector over the same `snapshot.importEdges` (see
+    // DUPLICATE_FINDINGS_AUDIT.md #5; the two implementations now share one
+    // function, detectCycles() in detect-cycles.ts). `circularDependencies`
+    // is still computed and exposed via `facts` for this analyzer's own
+    // architecture/scalability scoring.
 
     if (hasFeatures && featureDirCount >= 2) {
       findings.push(
@@ -505,47 +475,6 @@ function classifyArchitecture(input: {
     return { architecture: 'package_by_feature', confidence: 50 };
   }
   return { architecture: 'unknown', confidence: 30 };
-}
-
-function detectCycles(
-  edges: readonly { readonly from: string; readonly to: string }[],
-): string[] {
-  const graph = new Map<string, string[]>();
-  for (const edge of edges) {
-    const list = graph.get(edge.from) ?? [];
-    list.push(edge.to);
-    graph.set(edge.from, list);
-  }
-
-  const cycles: string[] = [];
-  const visiting = new Set<string>();
-  const visited = new Set<string>();
-  const stack: string[] = [];
-
-  const dfs = (node: string): void => {
-    if (visited.has(node)) return;
-    if (visiting.has(node)) {
-      const idx = stack.indexOf(node);
-      if (idx >= 0) {
-        cycles.push([...stack.slice(idx), node].join(' -> '));
-      }
-      return;
-    }
-    visiting.add(node);
-    stack.push(node);
-    for (const next of graph.get(node) ?? []) {
-      dfs(next);
-    }
-    stack.pop();
-    visiting.delete(node);
-    visited.add(node);
-  };
-
-  for (const node of graph.keys()) {
-    dfs(node);
-    if (cycles.length >= 20) break;
-  }
-  return cycles;
 }
 
 function clamp(n: number): number {

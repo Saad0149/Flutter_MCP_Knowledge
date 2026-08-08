@@ -8,8 +8,8 @@ import { toolFail, toolOk, type ToolResult } from './tool-result.js';
 const DocKindSchema = z.enum(['changelog', 'migration', 'guide', 'cookbook', 'general']);
 
 export const SearchDocsInputSchema = z.object({
-  query: z.string().min(1).describe('Text to search in indexed markdown docs'),
-  repository: z.string().min(1).optional(),
+  query: z.string().min(1).max(500).describe('Text to search in indexed markdown docs'),
+  repository: z.string().min(1).max(200).optional(),
   docKind: DocKindSchema.optional().describe('Optional doc kind filter'),
   limit: z.number().int().positive().max(100).optional(),
 });

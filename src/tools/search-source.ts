@@ -7,10 +7,15 @@ import { TYPES } from '../types/tokens.js';
 import { toolFail, toolOk, type ToolResult } from './tool-result.js';
 
 export const SearchSourceInputSchema = z.object({
-  query: z.string().min(1, 'query is required').describe('Text to search for in filenames and contents'),
+  query: z
+    .string()
+    .min(1, 'query is required')
+    .max(500)
+    .describe('Text to search for in filenames and contents'),
   repository: z
     .string()
     .min(1)
+    .max(200)
     .optional()
     .describe('Optional repository filter, e.g. "flutter/flutter"'),
   limit: z.number().int().positive().max(200).optional().describe('Max matches (default 50)'),

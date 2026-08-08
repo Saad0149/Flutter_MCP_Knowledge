@@ -27,6 +27,7 @@ const CODE_QUERIES: Readonly<Record<string, readonly string[]>> = {
   LegacyButtonApi: ['ElevatedButton', 'TextButton', 'OutlinedButton', 'buttons'],
   DebugPrint: ['debugPrint', 'logging'],
   ConstOpportunities: ['const constructors', 'performance'],
+  LegacyNewKeywordUsage: ['const constructors', 'new keyword', 'performance'],
   MissingDispose: ['TextEditingController', 'dispose', 'StatefulWidget'],
   HeavySetState: ['state management', 'StatefulWidget', 'setState'],
   LogicInWidgets: ['architecture', 'state management'],

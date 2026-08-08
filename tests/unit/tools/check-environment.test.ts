@@ -3,8 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DartAnalyzerClient } from '../../../src/parser/dart-analyzer-client.js';
 import type { RepositoryManager, RepositoryStatus } from '../../../src/repository/types.js';
 import { CheckEnvironmentHandler } from '../../../src/tools/check-environment.js';
-import { createSqliteKnowledgeStore } from '../../../src/store/sqlite-store.js';
+import { createSqliteKnowledgeStore, SqliteKnowledgeStore } from '../../../src/store/sqlite-store.js';
 import type { KnowledgeStore } from '../../../src/store/types.js';
+import { AppError } from '../../../src/utils/errors.js';
 import { createTempDir, removeTempDir } from '../../helpers/git-fixtures.js';
 
 function fakeRepoStatus(name: string, exists: boolean): RepositoryStatus {
@@ -163,6 +164,61 @@ describe('CheckEnvironmentHandler', () => {
       expect(result.data.sqlite.error).toContain('disk I/O error');
       expect(result.data.overallOk).toBe(false);
     }
+  });
+
+  it('reports a clear, actionable sqlite.ok=false message for the ABI-mismatch/native-binding failure mode specifically', async () => {
+    // This is what container.ts registers when SqliteKnowledgeStore fails to
+    // open at server startup (see openKnowledgeStoreOrDegrade): the same
+    // store class, unopened, carrying the real failure reason — so
+    // check_environment can diagnose the exact thing that would otherwise
+    // have been an unexplained startup crash.
+    const startupFailure = new AppError(
+      'NativeBindingError',
+      "better-sqlite3's native database binding failed to load. This almost always means the installed " +
+        'native binary was built for a different Node.js version, operating system, or CPU architecture than ' +
+        'the one currently running this server. Fix: run "npm rebuild better-sqlite3" in the server\'s ' +
+        'directory (or delete node_modules and run npm install again), then restart the server. ' +
+        'Original error: dlopen failed: incompatible architecture',
+      { likelyAbiMismatch: true },
+    );
+    const degradedStore = new SqliteKnowledgeStore('/irrelevant/path.sqlite', startupFailure);
+
+    const dartAnalyzer = {
+      locate: vi.fn().mockResolvedValue({
+        execPath: '/usr/local/bin/dart',
+        method: 'known_location',
+        attempts: [],
+      }),
+      isAvailable: vi.fn().mockResolvedValue(true),
+      verifyHelperEndToEnd: vi.fn().mockResolvedValue({ ok: true }),
+    } as unknown as DartAnalyzerClient;
+
+    const repositories = {
+      getStatus: vi.fn().mockResolvedValue([]),
+    } as unknown as RepositoryManager;
+
+    const handler = new CheckEnvironmentHandler(dartAnalyzer, degradedStore, repositories);
+    const result = await handler.execute();
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+
+    expect(result.data.sqlite.ok).toBe(false);
+    expect(result.data.overallOk).toBe(false);
+
+    // The message must be actionable to someone who has never heard of
+    // better-sqlite3 or an "ABI mismatch": it should name the concrete
+    // symptom class (Node version/OS/architecture mismatch) and the exact
+    // command that fixes it, not just an opaque native error string.
+    const message = result.data.sqlite.error ?? '';
+    expect(message).toMatch(/different Node\.js version|operating system|architecture/i);
+    expect(message).toContain('npm rebuild better-sqlite3');
+
+    // The top-level summary line (what a caller sees first) also carries
+    // the same actionable fix, not just "SQLite native binding failed".
+    const sqliteSummaryLine = result.data.summary.find((line) => /sqlite/i.test(line));
+    expect(sqliteSummaryLine).toBeDefined();
+    expect(sqliteSummaryLine).toContain('npm rebuild better-sqlite3');
   });
 
   it('reports missing repositories by name', async () => {

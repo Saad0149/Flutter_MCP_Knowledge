@@ -20,8 +20,8 @@ import {
 } from './tool-response-helpers.js';
 
 export const AnalyzeStateManagementInputObjectSchema = z.object({
-  sessionId: z.string().min(1).optional(),
-  path: z.string().min(1).optional(),
+  sessionId: z.string().min(1).max(64).optional(),
+  path: z.string().min(1).max(4096).optional(),
   limit: z.number().int().positive().max(200).optional(),
   ...ScopeFilterSchema,
 });

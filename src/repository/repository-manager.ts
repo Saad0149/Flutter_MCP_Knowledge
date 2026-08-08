@@ -107,7 +107,26 @@ export class GitRepositoryManager implements RepositoryManager {
 
   async updateOne(name: string): Promise<UpdateResult> {
     await this.ensureRoot();
-    return this.updateRepository(this.resolveDefinition(name));
+    const definition = this.resolveDefinition(name);
+
+    // TOCTOU guard: share inProgressSet with startBackgroundUpdate/runBounded
+    // so this entry point can never race a background clone/pull of the
+    // same repo (two git processes writing into the same directory
+    // concurrently). The check-then-set below has no `await` between the
+    // two steps, so it can't itself race under concurrent calls either.
+    if (this.inProgressSet.has(definition.name)) {
+      throw new AppError(
+        'GitError',
+        `A clone/pull for "${definition.name}" is already running in the background. Call repository_status to observe progress.`,
+      );
+    }
+
+    this.inProgressSet.add(definition.name);
+    try {
+      return await this.updateRepository(definition);
+    } finally {
+      this.inProgressSet.delete(definition.name);
+    }
   }
 
   /**

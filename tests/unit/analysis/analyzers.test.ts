@@ -203,7 +203,7 @@ ${textLines}
     const dart = unavailableDartClient();
     const heuristic = new HeuristicSymbolExtractor();
     const ast = new AstAdapter(dart, heuristic, logger);
-    const scanner = new ProjectScanner(ast);
+    const scanner = new ProjectScanner(ast, new SilentLogger());
     const codeQuality = new CodeQualityAnalyzer(refs);
     const stateManagement = new StateManagementAnalyzer(refs);
     const architecture = new ArchitectureAnalyzer(refs);
@@ -892,7 +892,7 @@ ${textLines}
       expect(result.data.status).toBe('building');
       expect(result.data.suggestedAction).toMatch(/repository_status/i);
       expect(result.data.summary).toMatch(/being built in the background/i);
-      expect(result.data.knowledgeBase?.available).toBe(false);
+      expect(result.data.knowledgeBase?.status).toBe('building');
     }
     // Auto-bootstrap kicked off the same background clone update_repositories uses.
     expect(startBackgroundUpdate).toHaveBeenCalledTimes(1);
@@ -969,6 +969,93 @@ ${textLines}
     store.close();
   });
 
+  it('find_intended_behavior omits knowledgeBase entirely when the index is fully ready (matches the other 8 knowledge-base tools)', async () => {
+    // Regression test: find_intended_behavior used to always attach a
+    // legacy knowledgeBase stats block (available/reason/expectedSources/
+    // indexedRepositoryCount/indexedSymbolCount) that predated the shared
+    // KnowledgeBaseReadinessChecker, even when the knowledge base was fully
+    // ready — unlike find_widget/search_docs/etc., which correctly omit
+    // knowledgeBase in that state. This asserts the now-consolidated
+    // contract: knowledgeBase is present only when building/degraded, and
+    // absent (undefined) once every expected source is cloned and fresh.
+    tempDir = await createTempDir('intended-ready-');
+    const store = createSqliteKnowledgeStore(path.join(tempDir, 'k.sqlite'));
+
+    const flutter = store.upsertRepository({
+      name: 'flutter/flutter',
+      path: '/repos/flutter',
+      commitHash: 'a',
+    });
+    const file = store.upsertFile({
+      repositoryId: flutter.id,
+      path: 'packages/flutter/lib/src/widgets/container.dart',
+      kind: 'dart',
+      hash: '1',
+      mtimeMs: 1,
+    });
+    store.replaceSymbolsForFile(file.id, [
+      {
+        fileId: file.id,
+        name: 'Container',
+        kind: 'class',
+        line: 10,
+        isWidget: true,
+        isWidgetTest: false,
+        docstring: 'A convenience widget.',
+        packageName: 'flutter',
+      },
+    ]);
+
+    const expectedSources = [
+      'flutter/flutter',
+      'flutter/samples',
+      'flutter/packages',
+      'flutter/website',
+      'dart-lang/sdk',
+      'dart-lang/site-www',
+    ];
+
+    // All 6 expected sources exist and are freshly pulled — nothing missing,
+    // nothing stale, nothing cloning. This is the "ready" state.
+    const repositories = {
+      getStatus: vi.fn().mockResolvedValue(
+        expectedSources.map((name) => ({
+          name,
+          exists: true,
+          path: `/repos/${name}`,
+          branch: 'main',
+          commit: 'abc123',
+          lastPull: new Date().toISOString(),
+        })),
+      ),
+      listDefinitions: () =>
+        expectedSources.map((name) => ({
+          name,
+          localName: name,
+          cloneUrl: '',
+          defaultBranch: 'main',
+        })),
+      startBackgroundUpdate: vi.fn().mockReturnValue([]),
+    } as unknown as RepositoryManager;
+
+    const readinessChecker = new KnowledgeBaseReadinessChecker(repositories, store, new SilentLogger());
+    const engine = new IntendedBehaviourEngine(store, readinessChecker);
+    const handler = new FindIntendedBehaviorHandler(engine);
+    const result = await handler.execute({ topic: 'Container' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.status).toBe('ok');
+      expect(result.data.results.length).toBeGreaterThan(0);
+      // Same contract as find_widget/search_docs/etc: undefined (and so
+      // dropped by JSON.stringify over MCP) once the index is fully ready.
+      expect(result.data.knowledgeBase).toBeUndefined();
+      expect(result.data.suggestedAction).toBeUndefined();
+      expect(JSON.stringify(result.data)).not.toContain('knowledgeBase');
+    }
+    expect(repositories.startBackgroundUpdate).not.toHaveBeenCalled();
+    store.close();
+  });
+
   it('analyze_* tools expose slim category scores', async () => {
     const project = await createFixtureApp();
     const { store, sessions } = buildStack(path.join(tempDir!, 'k.sqlite'));
@@ -1027,7 +1114,7 @@ ${textLines}
 
     const extractSpy = vi.spyOn(HeuristicSymbolExtractor.prototype, 'extractDart');
     const ast = new AstAdapter(dart, new HeuristicSymbolExtractor(), new SilentLogger());
-    const scanner = new ProjectScanner(ast);
+    const scanner = new ProjectScanner(ast, new SilentLogger());
     const snapshot = await scanner.scan(project);
     expect(snapshot.astMeta.source).toBe('dart_analyzer');
     expect(extractSpy).not.toHaveBeenCalled();

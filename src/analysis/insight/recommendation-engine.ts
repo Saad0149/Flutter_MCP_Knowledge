@@ -117,6 +117,7 @@ function deriveDifficulty(f: AnalysisFinding): RecommendationDifficulty {
     case 'LegacyButtonApi':
     case 'DebugPrint':
     case 'ConstOpportunities':
+    case 'LegacyNewKeywordUsage':
       return 'low';
     case 'GodClassCandidate':
     case 'CircularDependencies':

@@ -4,6 +4,7 @@ import path from 'node:path';
 import type Database from 'better-sqlite3';
 import { injectable } from 'tsyringe';
 import { AppError } from '../utils/errors.js';
+import { checkBetterSqlite3PrebuildAvailable } from './native-binding-precheck.js';
 import type {
   DocKind,
   DocSearchHit,
@@ -38,46 +39,92 @@ const NATIVE_BINDING_ERROR_SIGNATURES = [
   'incompatible architecture',
   'no native build was found',
   'wrong ELF class',
+  'cannot find module',
 ];
 
-function isLikelyNativeBindingError(error: unknown): boolean {
+/** Exported for direct unit testing against synthetic error shapes. */
+export function isLikelyNativeBindingError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return NATIVE_BINDING_ERROR_SIGNATURES.some((signature) =>
     message.toLowerCase().includes(signature.toLowerCase()),
   );
 }
 
-function wrapNativeBindingError(error: unknown, stage: 'load' | 'open'): AppError {
+/**
+ * Wording is deliberately explicit for someone with zero context on what
+ * better-sqlite3 or an "ABI mismatch" even are: this exact failure is the
+ * one known way this server can crash at startup with no visible error at
+ * all (a native module ABI mismatch can kill the process before any JS
+ * try/catch runs) — when JS-level handling DOES get a chance to run (the
+ * common case for this dependency; see native-binding-precheck.ts for why),
+ * this is that crash caught safely instead, with the actual fix spelled out.
+ *
+ * Exported for direct unit testing against synthetic error shapes (real
+ * ABI-mismatch errors are awkward to reproduce for real in a test — see
+ * tests/unit/store/sqlite-store.test.ts).
+ */
+export function wrapNativeBindingError(error: unknown, stage: 'load' | 'open'): AppError {
   const original = error instanceof Error ? error.message : String(error);
   const likelyAbiMismatch = isLikelyNativeBindingError(error);
+  const action = stage === 'load' ? 'load' : 'open';
 
   const message = likelyAbiMismatch
-    ? `Failed to ${stage === 'load' ? 'load' : 'open'} the better-sqlite3 native binding: it appears to be built for a ` +
-      `different Node.js version, OS, or CPU architecture than the one currently running. ` +
-      `Run "npm rebuild better-sqlite3" (or delete node_modules and reinstall) to fetch/rebuild ` +
-      `a matching native binary before retrying.`
-    : `Failed to ${stage === 'load' ? 'load' : 'open'} the better-sqlite3 native binding: ${original}. ` +
-      `If this persists after a normal restart, try "npm rebuild better-sqlite3".`;
+    ? `better-sqlite3's native database binding failed to ${action}. This almost always means the installed ` +
+      `native binary was built for a different Node.js version, operating system, or CPU architecture than ` +
+      `the one currently running this server — for example, dependencies installed under one Node version or ` +
+      `machine, then the server run under another (a common way this shows up: it worked in your terminal, ` +
+      `but not when an MCP client launched it with a different Node). Fix: run "npm rebuild better-sqlite3" ` +
+      `in the server's directory (or delete node_modules and run npm install again), then restart the server. ` +
+      `Original error: ${original}`
+    : `better-sqlite3's native database binding failed to ${action}: ${original}. If this persists after a ` +
+      `normal restart, try "npm rebuild better-sqlite3" in the server's directory — it resolves the same class ` +
+      `of failure (native binary not matching this Node/OS/architecture) even when the error message above ` +
+      `doesn't obviously say so.`;
 
   return new AppError('NativeBindingError', message, { originalError: original, likelyAbiMismatch });
+}
+
+function precheckFailureError(reason: string | undefined): AppError {
+  const message =
+    `No compatible better-sqlite3 native binary was found for this platform before even attempting to load ` +
+    `it (${reason ?? 'unknown reason'}). This is the same underlying problem as a Node/ABI mismatch — the ` +
+    `native binding doesn't match the platform/architecture/Node version this process is actually running on ` +
+    `— caught here before risking a native-level crash. Fix: run "npm rebuild better-sqlite3" in the server's ` +
+    `directory (or delete node_modules and run npm install again), then restart the server.`;
+  return new AppError('NativeBindingError', message, { precheckReason: reason, likelyAbiMismatch: true });
 }
 
 @injectable()
 export class SqliteKnowledgeStore implements KnowledgeStore {
   private db: Database.Database | null = null;
 
-  constructor(private readonly dbPath: string) {}
+  constructor(
+    private readonly dbPath: string,
+    /** Set when a prior open() attempt (e.g. at server startup) failed, so later callers get the same clear reason instead of a generic "not open" message. */
+    private openError: AppError | null = null,
+  ) {}
 
   open(): void {
     if (this.db) {
       return;
     }
 
+    // Checked BEFORE any require() of the native module — see
+    // native-binding-precheck.ts for what this does and doesn't catch.
+    const precheck = checkBetterSqlite3PrebuildAvailable();
+    if (!precheck.ok) {
+      const error = precheckFailureError(precheck.reason);
+      this.openError = error;
+      throw error;
+    }
+
     let DatabaseCtor: typeof Database;
     try {
       DatabaseCtor = require('better-sqlite3') as typeof Database;
     } catch (error) {
-      throw wrapNativeBindingError(error, 'load');
+      const wrapped = wrapNativeBindingError(error, 'load');
+      this.openError = wrapped;
+      throw wrapped;
     }
 
     mkdirSync(path.dirname(this.dbPath), { recursive: true });
@@ -86,9 +133,12 @@ export class SqliteKnowledgeStore implements KnowledgeStore {
       this.db = new DatabaseCtor(this.dbPath);
     } catch (error) {
       this.db = null;
-      throw wrapNativeBindingError(error, 'open');
+      const wrapped = wrapNativeBindingError(error, 'open');
+      this.openError = wrapped;
+      throw wrapped;
     }
 
+    this.openError = null;
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.migrate();
@@ -473,7 +523,11 @@ export class SqliteKnowledgeStore implements KnowledgeStore {
 
   private requireDb(): Database.Database {
     if (!this.db) {
-      throw new Error('KnowledgeStore is not open. Call open() first.');
+      // Surface the real reason (e.g. the ABI-mismatch explanation) if we
+      // have one recorded from a prior failed open() — much more useful
+      // than a generic "not open" message to whoever calls a tool that
+      // needs the index next (including check_environment).
+      throw this.openError ?? new Error('KnowledgeStore is not open. Call open() first.');
     }
     return this.db;
   }

@@ -46,7 +46,7 @@ import {
   SearchService,
   type SearchEngine,
 } from '../search/index.js';
-import { createSqliteKnowledgeStore, type KnowledgeStore } from '../store/index.js';
+import { createSqliteKnowledgeStore, SqliteKnowledgeStore, type KnowledgeStore } from '../store/index.js';
 import {
   AnalyzeArchitectureHandler,
   AnalyzeCodeQualityHandler,
@@ -76,6 +76,7 @@ import {
 } from '../tools/index.js';
 import type { Logger } from '../types/logger.js';
 import { TYPES } from '../types/tokens.js';
+import { AppError, toStructuredError } from '../utils/errors.js';
 import { StructuredLogger } from '../utils/logger.js';
 
 export interface CreateContainerOptions {
@@ -89,15 +90,16 @@ export interface CreateContainerOptions {
 
 export function createContainer(options: CreateContainerOptions): DependencyContainer {
   const child = (options.parent ?? container).createChildContainer();
+  const logger = options.logger ?? new StructuredLogger();
 
   child.registerInstance<AppConfig>(TYPES.Config, options.config);
-  child.registerInstance<Logger>(TYPES.Logger, options.logger ?? new StructuredLogger());
+  child.registerInstance<Logger>(TYPES.Logger, logger);
   child.registerInstance<readonly RepositoryDefinition[]>(
     TYPES.RepositoryDefinitions,
     options.repositories ?? SUPPORTED_REPOSITORIES,
   );
 
-  const store = options.store ?? createSqliteKnowledgeStore(options.config.indexPath);
+  const store = options.store ?? openKnowledgeStoreOrDegrade(options.config.indexPath, logger);
   child.registerInstance<KnowledgeStore>(TYPES.KnowledgeStore, store);
 
   const extractor = options.extractor ?? new HeuristicSymbolExtractor();
@@ -175,4 +177,41 @@ export function createContainer(options: CreateContainerOptions): DependencyCont
   child.registerSingleton(TYPES.CheckEnvironmentHandler, CheckEnvironmentHandler);
 
   return child;
+}
+
+/**
+ * Opens the SQLite knowledge store, but never lets a failure here take the
+ * whole MCP server down. A native binding failure (see
+ * src/store/native-binding-precheck.ts and sqlite-store.ts's
+ * NativeBindingError handling) used to mean createSqliteKnowledgeStore()
+ * throwing straight out of createContainer(), which — since this runs
+ * before server.connect() in src/index.ts — meant the server process never
+ * started at all: no tool became callable, including check_environment,
+ * the one tool built specifically to diagnose exactly this failure.
+ *
+ * Instead: log the failure clearly, then register the same store instance
+ * unopened but carrying the recorded error, so every sqlite-dependent tool
+ * fails per-call with that same clear NativeBindingError (via
+ * SqliteKnowledgeStore.requireDb()) instead of the server refusing to
+ * start. check_environment and every other tool that doesn't touch the
+ * knowledge store keep working normally.
+ */
+function openKnowledgeStoreOrDegrade(indexPath: string, logger: Logger): KnowledgeStore {
+  try {
+    return createSqliteKnowledgeStore(indexPath);
+  } catch (error) {
+    const structured = toStructuredError(error);
+    logger.error(
+      'KnowledgeStore failed to open at startup — starting in degraded mode. Tools that need the local ' +
+        'knowledge index (search/find/analyze tools) will fail with this same error until it is fixed; ' +
+        'other tools, including check_environment, are unaffected. Call check_environment for a structured ' +
+        'diagnosis, or see the error below for the fix.',
+      { code: structured.code, message: structured.message },
+    );
+    const appError =
+      error instanceof AppError
+        ? error
+        : new AppError(structured.code, structured.message, structured.details);
+    return new SqliteKnowledgeStore(indexPath, appError);
+  }
 }

@@ -170,6 +170,7 @@ function relatedWidgetsFor(f: AnalysisFinding): string[] {
     case 'HeavySetState':
       return ['StatefulWidget', 'InheritedWidget'];
     case 'ConstOpportunities':
+    case 'LegacyNewKeywordUsage':
       return ['StatelessWidget'];
     default:
       return [];

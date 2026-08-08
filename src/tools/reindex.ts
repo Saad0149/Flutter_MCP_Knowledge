@@ -8,6 +8,7 @@ export const ReindexInputSchema = z.object({
   repository: z
     .string()
     .min(1)
+    .max(200)
     .optional()
     .describe('Optional repository to reindex; omit to reindex all'),
   force: z

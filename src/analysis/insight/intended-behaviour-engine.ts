@@ -1,5 +1,8 @@
 import { inject, injectable } from 'tsyringe';
-import { KnowledgeBaseReadinessChecker } from '../../repository/knowledge-base-readiness.js';
+import {
+  KnowledgeBaseReadinessChecker,
+  type KnowledgeBaseNotice,
+} from '../../repository/knowledge-base-readiness.js';
 import type { KnowledgeStore } from '../../store/types.js';
 import { TYPES } from '../../types/tokens.js';
 
@@ -33,26 +36,13 @@ export interface IntendedBehaviourResult {
   readonly status: 'ok' | 'empty' | 'blocked' | 'building';
   /** The exact next tool call that would resolve/progress a building/degraded result. */
   readonly suggestedAction?: string;
-  readonly knowledgeBase?: {
-    readonly available: boolean;
-    readonly reason: string;
-    readonly expectedSources: readonly string[];
-    readonly nextStep: string;
-    readonly indexedRepositoryCount: number;
-    readonly indexedSymbolCount: number;
-    /** Sources missing or stale when the knowledge base is only partially built. */
-    readonly skippedSources?: readonly string[];
-  };
+  /**
+   * Present only when the knowledge base is building or degraded — same
+   * contract as every other knowledge-base-dependent tool (find_widget,
+   * search_docs, etc.). Absent entirely when the index is fully ready.
+   */
+  readonly knowledgeBase?: KnowledgeBaseNotice;
 }
-
-const EXPECTED_SOURCES = [
-  'flutter/flutter',
-  'flutter/samples',
-  'flutter/packages',
-  'flutter/website',
-  'dart-lang/sdk',
-  'dart-lang/site-www',
-] as const;
 
 /**
  * Cascading intended-behaviour search across the local knowledge index.
@@ -68,8 +58,6 @@ export class IntendedBehaviourEngine {
 
   async search(topic: string, limit = 25): Promise<IntendedBehaviourResult> {
     const readiness = await this.readinessChecker.check();
-    const indexedRepos = this.store.listRepositories().length;
-    const indexedSymbols = this.store.getStats().symbolCount;
 
     if (readiness.state === 'building') {
       // Nothing usable is on disk/indexed yet — the background clone was just
@@ -83,18 +71,14 @@ export class IntendedBehaviourEngine {
         status: 'building',
         summary: readiness.notice.message,
         suggestedAction: readiness.notice.suggestedAction,
-        knowledgeBase: {
-          available: false,
-          reason: 'Flutter/Dart repositories are being cloned in the background.',
-          expectedSources: [...EXPECTED_SOURCES],
-          nextStep: readiness.notice.suggestedAction,
-          indexedRepositoryCount: indexedRepos,
-          indexedSymbolCount: indexedSymbols,
-        },
+        knowledgeBase: readiness.notice,
       };
     }
 
-    const degraded = readiness.state === 'degraded' ? readiness.notice : undefined;
+    // Same contract as every other knowledge-base tool: knowledgeBase is
+    // present only when building/degraded, and undefined (omitted) once the
+    // index is fully ready — no bespoke stats block in that case.
+    const knowledgeBase = readiness.state === 'degraded' ? readiness.notice : undefined;
     const result = this.runCascade(topic, limit);
 
     if (result.results.length === 0) {
@@ -102,20 +86,11 @@ export class IntendedBehaviourEngine {
         topic,
         ...result,
         status: 'empty',
-        suggestedAction: degraded?.suggestedAction,
-        summary: degraded
-          ? `Searched all ${result.searchedSteps.length} knowledge sources for "${topic}" with no indexed matches. ${degraded.message}`
+        suggestedAction: knowledgeBase?.suggestedAction,
+        summary: knowledgeBase
+          ? `Searched all ${result.searchedSteps.length} knowledge sources for "${topic}" with no indexed matches. ${knowledgeBase.message}`
           : `Searched all ${result.searchedSteps.length} knowledge sources for "${topic}" with no indexed matches. Try a more specific Flutter API/widget name, or expand the index.`,
-        knowledgeBase: {
-          available: true,
-          reason: degraded ? degraded.message : 'Index is present but no matches for this topic.',
-          expectedSources: [...EXPECTED_SOURCES],
-          nextStep:
-            degraded?.suggestedAction ?? 'Try a concrete widget/API name (e.g. StatefulWidget, Provider).',
-          indexedRepositoryCount: indexedRepos,
-          indexedSymbolCount: indexedSymbols,
-          skippedSources: degraded?.skippedSources,
-        },
+        knowledgeBase,
       };
     }
 
@@ -123,19 +98,11 @@ export class IntendedBehaviourEngine {
       topic,
       ...result,
       status: 'ok',
-      suggestedAction: degraded?.suggestedAction,
-      summary: degraded
-        ? `Found ${result.results.length} intended-behaviour match(es) for "${topic}" after cascading ${result.searchedSteps.length} knowledge sources. Note: ${degraded.skippedSources?.join(', ')} skipped — ${degraded.message}`
+      suggestedAction: knowledgeBase?.suggestedAction,
+      summary: knowledgeBase
+        ? `Found ${result.results.length} intended-behaviour match(es) for "${topic}" after cascading ${result.searchedSteps.length} knowledge sources. Note: ${knowledgeBase.skippedSources?.join(', ')} skipped — ${knowledgeBase.message}`
         : `Found ${result.results.length} intended-behaviour match(es) for "${topic}" after cascading ${result.searchedSteps.length} knowledge sources.`,
-      knowledgeBase: {
-        available: true,
-        reason: degraded ? degraded.message : 'Official knowledge index available.',
-        expectedSources: [...EXPECTED_SOURCES],
-        nextStep: degraded?.suggestedAction ?? 'Use matched samples/docs as reference implementations.',
-        indexedRepositoryCount: indexedRepos,
-        indexedSymbolCount: indexedSymbols,
-        skippedSources: degraded?.skippedSources,
-      },
+      knowledgeBase,
     };
   }
 

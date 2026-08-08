@@ -8,6 +8,7 @@ export const RepositoryStatusInputSchema = z.object({
   repository: z
     .string()
     .min(1)
+    .max(200)
     .optional()
     .describe('Optional repository name, e.g. "flutter/flutter"'),
 });

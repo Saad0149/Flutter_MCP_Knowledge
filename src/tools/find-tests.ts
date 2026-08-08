@@ -6,8 +6,8 @@ import { TYPES } from '../types/tokens.js';
 import { toolFail, toolOk, type ToolResult } from './tool-result.js';
 
 export const FindTestsInputSchema = z.object({
-  symbol: z.string().min(1).describe('Symbol name to find tests for'),
-  repository: z.string().min(1).optional(),
+  symbol: z.string().min(1).max(200).describe('Symbol name to find tests for'),
+  repository: z.string().min(1).max(200).optional(),
   widgetTestsOnly: z
     .boolean()
     .optional()

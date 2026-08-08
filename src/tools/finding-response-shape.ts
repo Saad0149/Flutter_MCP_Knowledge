@@ -25,7 +25,8 @@ export const FindingResponseShapeSchema = {
     .optional()
     .describe('Include related/adjacent findings. Defaults to false for verbosity=brief, true otherwise.'),
   fields: z
-    .array(z.string())
+    .array(z.string().max(100))
+    .max(50)
     .optional()
     .describe('Optional allowlist of top-level response fields to include; overrides verbosity when set.'),
   includeOfficialRefs: z

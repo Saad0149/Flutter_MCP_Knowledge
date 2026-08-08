@@ -6,7 +6,11 @@ import { TYPES } from '../types/tokens.js';
 import { toolFail, toolOk, type ToolResult } from './tool-result.js';
 
 export const FindBestPracticeInputSchema = z.object({
-  topic: z.string().min(1).describe('Best-practice topic, e.g. "keys" or "const constructors"'),
+  topic: z
+    .string()
+    .min(1)
+    .max(200)
+    .describe('Best-practice topic, e.g. "keys" or "const constructors"'),
   limit: z.number().int().positive().max(50).optional(),
 });
 

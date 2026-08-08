@@ -17,12 +17,12 @@ import { toolFail, toolOk, type ToolResult } from './tool-result.js';
 import { checkAnalyzableSession, withSizeMetadata } from './tool-response-helpers.js';
 
 export const ExploreFindingInputObjectSchema = z.object({
-  sessionId: z.string().min(1).optional(),
-  path: z.string().min(1).optional(),
-  findingCode: z.string().min(1).optional().describe('Omit when using codes[].'),
-  findingId: z.string().optional(),
+  sessionId: z.string().min(1).max(64).optional(),
+  path: z.string().min(1).max(4096).optional(),
+  findingCode: z.string().min(1).max(200).optional().describe('Omit when using codes[].'),
+  findingId: z.string().max(200).optional(),
   codes: z
-    .array(z.string().min(1))
+    .array(z.string().min(1).max(200))
     .min(1)
     .max(25)
     .optional()

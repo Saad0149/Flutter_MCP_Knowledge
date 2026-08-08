@@ -11,7 +11,11 @@ import { finding } from './finding-factory.js';
 
 export interface PerformanceFacts {
   readonly largeBuildMethodCount: number;
-  readonly largeBuildMethods: readonly { readonly file: string; readonly approxLines: number }[];
+  readonly largeBuildMethods: readonly {
+    readonly file: string;
+    readonly line: number;
+    readonly approxLines: number;
+  }[];
   readonly constOpportunityCount: number;
   readonly setStateInBuildCount: number;
   readonly heavySetStateCount: number;
@@ -38,7 +42,7 @@ export class PerformanceAnalyzer implements ProjectAnalysisEngine<PerformanceFac
     const ast = snapshot.astMeta;
     const libFiles = snapshot.dartFiles.filter((f) => f.relativePath.startsWith('lib/'));
 
-    const largeBuildMethods: { file: string; approxLines: number }[] = [];
+    const largeBuildMethods: { file: string; line: number; approxLines: number }[] = [];
     let constOpportunityCount = 0;
     let setStateInBuildCount = 0;
     let heavySetStateCount = 0;
@@ -51,9 +55,9 @@ export class PerformanceAnalyzer implements ProjectAnalysisEngine<PerformanceFac
       const content = file.content;
       const lines = content.split('\n');
 
-      const buildLines = extractBuildMethodLines(lines);
-      if (buildLines > LARGE_BUILD_THRESHOLD) {
-        largeBuildMethods.push({ file: file.relativePath, approxLines: buildLines });
+      const build = extractBuildMethodLines(lines);
+      if (build && build.approxLines > LARGE_BUILD_THRESHOLD) {
+        largeBuildMethods.push({ file: file.relativePath, line: build.line, approxLines: build.approxLines });
       }
 
       const newWidgetMatches = (content.match(/(?<![A-Za-z])new\s+[A-Z]/g) ?? []).length;
@@ -119,7 +123,12 @@ export class PerformanceAnalyzer implements ProjectAnalysisEngine<PerformanceFac
             code: 'LargeBuildMethod',
             title: `${largeBuildMethods.length} build() method(s) exceed ${LARGE_BUILD_THRESHOLD} lines`,
             description: 'Large build methods cause unnecessary rebuilds and are hard to profile.',
-            evidence: largeBuildMethods.slice(0, 5).map((m) => `${m.file} (~${m.approxLines} lines)`),
+            // file:line (~N lines) — matches EvidenceEngine.parseEvidenceString's
+            // build-method pattern so evidence gets structured (file/line/symbol),
+            // not just an opaque string.
+            evidence: largeBuildMethods
+              .slice(0, 10)
+              .map((m) => `${m.file}:${m.line} (~${m.approxLines} lines)`),
             recommendedFix: 'Extract sub-trees into named widget classes or const widgets. Keep build() focused on composition.',
             officialReference: this.refs.lookupDoc('build method'),
             source: 'heuristic',
@@ -151,12 +160,17 @@ export class PerformanceAnalyzer implements ProjectAnalysisEngine<PerformanceFac
     }
 
     if (constOpportunityCount > 20) {
+      // Distinct code from CodeQualityAnalyzer's 'ConstOpportunities': this
+      // measures literal `new Foo(...)` keyword usage specifically, not
+      // missing-const-on-modern-constructor-calls — a related but different
+      // signal that used to collide on the same code (see
+      // DUPLICATE_FINDINGS_AUDIT.md #4).
       findings.push(
         finding(
           {
             severity: 'warning',
             category: 'flutter',
-            code: 'ConstOpportunities',
+            code: 'LegacyNewKeywordUsage',
             title: `~${constOpportunityCount} potential 'const' widget opportunities (using 'new')`,
             description: "Using 'new' for widgets that could be const prevents Flutter's rebuild optimization.",
             evidence: [`newWidgetCount=${constOpportunityCount}`],
@@ -259,11 +273,14 @@ export class PerformanceAnalyzer implements ProjectAnalysisEngine<PerformanceFac
   }
 }
 
-function extractBuildMethodLines(lines: readonly string[]): number {
+function extractBuildMethodLines(
+  lines: readonly string[],
+): { readonly line: number; readonly approxLines: number } | null {
   let inBuild = false;
   let depth = 0;
   let buildStart = -1;
   let maxBuildLines = 0;
+  let maxBuildStart = -1;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
@@ -277,12 +294,15 @@ function extractBuildMethodLines(lines: readonly string[]): number {
       depth -= (line.match(/\}/g) ?? []).length;
       if (depth <= 0 && i > buildStart) {
         const lineCount = i - buildStart;
-        if (lineCount > maxBuildLines) maxBuildLines = lineCount;
+        if (lineCount > maxBuildLines) {
+          maxBuildLines = lineCount;
+          maxBuildStart = buildStart;
+        }
         inBuild = false;
       }
     }
   }
-  return maxBuildLines;
+  return maxBuildStart >= 0 ? { line: maxBuildStart + 1, approxLines: maxBuildLines } : null;
 }
 
 function computePerformanceScore(input: {

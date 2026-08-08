@@ -128,6 +128,30 @@ describe('filterFindingsByScope', () => {
     const result = filterFindingsByScope([finding], { feature: 'reports' });
     expect(result.length).toBe(1);
   });
+
+  it('SECURITY: a pathGlob with many chained ** segments does not hang (ReDoS regression)', () => {
+    // Pre-fix, globToRegExp compiled each '**' to an adjacent `.*` with no
+    // collapsing, so a chain like "**/**/**/.../nomatch" produced N adjacent
+    // `.*` groups — catastrophic backtracking against a long non-matching
+    // path. A 10-segment chain hung for 20+ seconds pre-fix; this uses 25 to
+    // leave real margin. If this regresses, the test times out (vitest's
+    // default per-test timeout), which is the loud failure we want.
+    const pathologicalGlob = `${Array(25).fill('**').join('/')}/nomatch`;
+    const longNonMatchingFile = `${'a/'.repeat(200)}zzz.dart`;
+    const finding = makeFinding({ code: 'E', file: longNonMatchingFile });
+
+    const start = performance.now();
+    const result = filterFindingsByScope([finding], { pathGlob: pathologicalGlob });
+    const elapsedMs = performance.now() - start;
+
+    expect(result).toEqual([]); // legitimately doesn't match — collapsing changes perf, not semantics
+    expect(elapsedMs).toBeLessThan(200);
+  });
+
+  it('collapsing consecutive ** segments preserves normal glob semantics', () => {
+    const result = filterFindingsByScope(all, { pathGlob: '**/**/billing/**' });
+    expect(result.map((f) => f.code)).toEqual(['B']);
+  });
 });
 
 describe('withSizeMetadata', () => {

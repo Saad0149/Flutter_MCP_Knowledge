@@ -12,10 +12,12 @@ export const FindWidgetInputSchema = z.object({
   name: z
     .string()
     .min(1, 'Widget name is required')
+    .max(200)
     .describe('Widget class name, e.g. "AnimatedContainer"'),
   repository: z
     .string()
     .min(1)
+    .max(200)
     .optional()
     .describe('Optional repository filter (defaults to flutter/flutter)'),
   limit: z.number().int().positive().max(100).optional(),

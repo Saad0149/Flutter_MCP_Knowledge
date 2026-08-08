@@ -5,6 +5,7 @@ import {
   type IntendedBehaviourHit,
   type IntendedBehaviourResult,
 } from '../analysis/insight/intended-behaviour-engine.js';
+import type { KnowledgeBaseNotice } from '../repository/knowledge-base-readiness.js';
 import { TYPES } from '../types/tokens.js';
 import { toolFail, toolOk, type ToolResult } from './tool-result.js';
 import { withSizeMetadata, type Sized } from './tool-response-helpers.js';
@@ -13,6 +14,7 @@ export const FindIntendedBehaviorInputSchema = z.object({
   topic: z
     .string()
     .min(1)
+    .max(200)
     .describe('Widget, API, or topic — e.g. "AnimatedContainer" or "keys"'),
   limit: z.number().int().positive().max(40).optional(),
 });
@@ -55,15 +57,8 @@ export interface FindIntendedBehaviorData {
   readonly status: 'ok' | 'empty' | 'blocked' | 'building';
   /** The exact next tool call that would resolve/progress a building/degraded result. */
   readonly suggestedAction?: string;
-  readonly knowledgeBase?: {
-    readonly available: boolean;
-    readonly reason: string;
-    readonly expectedSources: readonly string[];
-    readonly nextStep: string;
-    readonly indexedRepositoryCount: number;
-    readonly indexedSymbolCount: number;
-    readonly skippedSources?: readonly string[];
-  };
+  /** Present only when building/degraded — same contract as the other 8 knowledge-base tools. */
+  readonly knowledgeBase?: KnowledgeBaseNotice;
 }
 
 @injectable()

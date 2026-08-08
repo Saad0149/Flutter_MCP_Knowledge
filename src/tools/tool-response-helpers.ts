@@ -49,6 +49,7 @@ export const ScopeFilterSchema = {
   pathGlob: z
     .string()
     .min(1)
+    .max(300)
     .optional()
     .describe(
       'Optional glob to scope results to matching file paths (e.g. "lib/features/admin/**"). ' +
@@ -57,6 +58,7 @@ export const ScopeFilterSchema = {
   feature: z
     .string()
     .min(1)
+    .max(200)
     .optional()
     .describe(
       'Optional feature/folder-name substring to scope results (e.g. "admin" matches paths ' +
@@ -69,13 +71,27 @@ export interface ScopeFilterInput {
   readonly feature?: string;
 }
 
-/** Minimal, dependency-free glob → RegExp translator: supports `**`, `*`, `?`. */
+/**
+ * Minimal, dependency-free glob to RegExp translator: supports double-star,
+ * single-star, and `?`.
+ *
+ * SECURITY: consecutive double-star segments are collapsed before
+ * translation (repeating the double-star segment behaves identically to
+ * using it once). Without this, each extra double-star segment compiles to
+ * another adjacent `.*` in the regex, and testing a chain of adjacent `.*`
+ * groups against a long non-matching string is catastrophic backtracking —
+ * verified empirically: an uncollapsed 10-segment chain hung for 20+ seconds
+ * on a ~80-char input. Collapsing first makes the pathological input
+ * impossible to construct, rather than trying to bound the resulting
+ * regex's runtime after the fact.
+ */
 function globToRegExp(glob: string): RegExp {
+  const collapsed = glob.replace(/(\*\*\/?)+(?=\*\*)/g, '');
   let out = '';
-  for (let i = 0; i < glob.length; i += 1) {
-    const c = glob[i];
+  for (let i = 0; i < collapsed.length; i += 1) {
+    const c = collapsed[i];
     if (c === '*') {
-      if (glob[i + 1] === '*') {
+      if (collapsed[i + 1] === '*') {
         out += '.*';
         i += 1;
       } else {

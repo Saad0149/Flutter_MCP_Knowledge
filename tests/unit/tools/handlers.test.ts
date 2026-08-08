@@ -103,4 +103,33 @@ describe('MCP tool handlers (Phase 1 compatibility)', () => {
 
     store.close();
   });
+
+  it('SECURITY: search_source rejects an oversized query before it reaches the search engine', async () => {
+    const searchService = { search: vi.fn() } as unknown as SearchService;
+    const handler = new SearchSourceHandler(searchService);
+
+    const result = await handler.execute({ query: 'a'.repeat(10_000) });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.code).toBe('InvalidArguments');
+    }
+    expect(searchService.search).not.toHaveBeenCalled();
+  });
+
+  it('SECURITY: find_widget rejects an oversized name before it reaches the store/search engine', async () => {
+    tempDir = await createTempDir('fw-oversized-');
+    const store = createSqliteKnowledgeStore(path.join(tempDir, 'oversized.sqlite'));
+    const searchService = { search: vi.fn() } as unknown as SearchService;
+    const handler = new FindWidgetHandler(searchService, store);
+
+    const result = await handler.execute({ name: 'a'.repeat(10_000) });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.code).toBe('InvalidArguments');
+    }
+    expect(searchService.search).not.toHaveBeenCalled();
+    store.close();
+  });
 });

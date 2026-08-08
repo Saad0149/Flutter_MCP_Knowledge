@@ -24,16 +24,17 @@ import { toolFail, toolOk, type ToolResult } from './tool-result.js';
 import { checkAnalyzableSession, withSizeMetadata } from './tool-response-helpers.js';
 
 export const ExplainFindingInputObjectSchema = z.object({
-  sessionId: z.string().min(1).optional().describe('Preferred — from review_project'),
-  path: z.string().min(1).optional().describe('Fallback if no sessionId (rescans)'),
+  sessionId: z.string().min(1).max(64).optional().describe('Preferred — from review_project'),
+  path: z.string().min(1).max(4096).optional().describe('Fallback if no sessionId (rescans)'),
   findingCode: z
     .string()
     .min(1)
+    .max(200)
     .optional()
     .describe('Finding code e.g. PresentationImportsData. Omit when using codes[].'),
-  findingId: z.string().optional(),
+  findingId: z.string().max(200).optional(),
   codes: z
-    .array(z.string().min(1))
+    .array(z.string().min(1).max(200))
     .min(1)
     .max(25)
     .optional()

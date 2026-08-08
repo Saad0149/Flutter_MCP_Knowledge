@@ -282,48 +282,13 @@ export class CodeQualityAnalyzer implements ProjectAnalysisEngine<CodeQualityFac
       );
     }
 
-    if (largeBuildMethods.length > 0) {
-      findings.push(
-        finding(
-          {
-            severity: 'negative',
-            category: 'flutter',
-            code: 'LargeBuildMethod',
-            title: 'Large Widget.build methods',
-            description: 'Build methods ≥ ~80 lines hurt readability and widget decomposition.',
-            evidence: largeBuildMethods
-              .slice(0, 10)
-              .map((b) => `${b.file}:${b.line} (~${b.approxLines} lines)`),
-            recommendedFix: 'Extract private widgets or builder methods.',
-            officialReference: this.refs.lookupDoc('extract widget'),
-            source: 'heuristic',
-            confidence: 0.8,
-            scoreImpact: -10,
-            whyItMatters:
-              'Monolithic build methods obscure UI structure and make rebuild performance harder to reason about.',
-          },
-          ast,
-        ),
-      );
-    } else if (widgets.length > 0) {
-      findings.push(
-        finding(
-          {
-            severity: 'positive',
-            category: 'flutter',
-            code: 'BuildMethodsReasonable',
-            title: 'No extremely large build methods detected',
-            description: 'Heuristic scan found no build methods over ~80 lines.',
-            evidence: [`Scanned ${snapshot.dartFiles.length} Dart files`],
-            recommendedFix: null,
-            source: 'heuristic',
-            confidence: 0.78,
-            scoreImpact: 4,
-          },
-          ast,
-        ),
-      );
-    }
+    // NOTE: large-build-method detection intentionally does NOT emit a
+    // finding here. PerformanceAnalyzer owns the 'LargeBuildMethod' finding
+    // (lib/-scoped, dynamic count-based title/scoreImpact — see
+    // DUPLICATE_FINDINGS_AUDIT.md #1). `largeBuildMethods` is still computed
+    // and exposed via `facts` because ScoringEngine.scorePerformance() reads
+    // it as a fallback when PerformanceFacts aren't available, and
+    // analyze_code_quality's `metrics.largeBuildMethods` reports its count.
 
     if (printCallSites > 0) {
       findings.push(
@@ -389,28 +354,11 @@ export class CodeQualityAnalyzer implements ProjectAnalysisEngine<CodeQualityFac
       );
     }
 
-    if (undocumentedWidgets > 0 && widgets.length > 0) {
-      findings.push(
-        finding(
-          {
-            severity: 'info',
-            category: 'dart',
-            code: 'UndocumentedWidgets',
-            title: 'Widgets without /// docs',
-            description: `${undocumentedWidgets}/${widgets.length} widget classes lack doc comments.`,
-            evidence: widgets
-              .filter((w) => !w.docstring)
-              .slice(0, 8)
-              .map((w) => `${w.name} at ${w.filePath}:${w.line}`),
-            recommendedFix: 'Add /// documentation on public widgets.',
-            dependsOnAst: true,
-            confidence: 0.9,
-            scoreImpact: -2,
-          },
-          ast,
-        ),
-      );
-    }
+    // NOTE: undocumented-widget detection intentionally does NOT emit a
+    // finding here. DocumentationAnalyzer owns the 'UndocumentedWidgets'
+    // finding (ratio-scaled title/scoreImpact, confidence reflecting the
+    // real AST source — see DUPLICATE_FINDINGS_AUDIT.md #2).
+    // `undocumentedWidgets` is still computed and exposed via `facts`.
 
     if (usesSealedOrFinalClassKeywords) {
       findings.push(
@@ -475,44 +423,11 @@ export class CodeQualityAnalyzer implements ProjectAnalysisEngine<CodeQualityFac
       ),
     );
 
-    if (!snapshot.hasAnalysisOptions) {
-      findings.push(
-        finding(
-          {
-            severity: 'warning',
-            category: 'dart',
-            code: 'NoAnalysisOptions',
-            title: 'Missing analysis_options.yaml',
-            description: 'Lint rules are not project-pinned.',
-            evidence: ['analysis_options.yaml not found at project root'],
-            recommendedFix: 'Add analysis_options.yaml with flutter_lints or similar.',
-            officialReference: this.refs.lookupDoc('analysis options'),
-            source: 'filesystem',
-            confidence: 1,
-            scoreImpact: -5,
-          },
-          ast,
-        ),
-      );
-    } else {
-      findings.push(
-        finding(
-          {
-            severity: 'positive',
-            category: 'dart',
-            code: 'HasAnalysisOptions',
-            title: 'Has analysis_options.yaml',
-            description: 'Static analysis configuration is present.',
-            evidence: ['analysis_options.yaml found'],
-            recommendedFix: null,
-            source: 'filesystem',
-            confidence: 1,
-            scoreImpact: 3,
-          },
-          ast,
-        ),
-      );
-    }
+    // NOTE: analysis_options.yaml presence intentionally does NOT emit a
+    // finding here. DocumentationAnalyzer owns this check ('HasAnalysisOptions'
+    // / 'MissingAnalysisOptions') — both analyzers were reading the exact
+    // same `snapshot.hasAnalysisOptions` flag (see
+    // DUPLICATE_FINDINGS_AUDIT.md #3).
 
     return { engine: this.name, facts, findings, astMeta: ast };
   }

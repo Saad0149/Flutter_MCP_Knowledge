@@ -1,7 +1,8 @@
-import { access, readdir, readFile } from 'node:fs/promises';
+import { access, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import fg from 'fast-glob';
 import { inject, injectable } from 'tsyringe';
+import type { Logger } from '../types/logger.js';
 import { TYPES } from '../types/tokens.js';
 import { AppError } from '../utils/errors.js';
 import { AstAdapter } from './ast/ast-adapter.js';
@@ -23,9 +24,28 @@ const IGNORE = [
 
 const IMPORT_RE = /^\s*import\s+['"]([^'"]+)['"]\s*;/gm;
 
+/**
+ * Per-file cap: a legitimate hand-written Dart file is essentially always a
+ * few KB to low hundreds of KB. 5MB is generous headroom while still
+ * bounding memory use against a pathological/adversarial single file.
+ */
+const MAX_FILE_BYTES = 5 * 1024 * 1024;
+
+/**
+ * Total matched-file cap. flutter/flutter itself (the largest real Flutter
+ * codebase in this project's own knowledge base) has on the order of a few
+ * thousand .dart files — 20,000 leaves generous headroom for any real
+ * monorepo while bounding the worst case (e.g. a directory-symlink loop, or
+ * an adversarially bloated project) from scanning without limit.
+ */
+const MAX_DART_FILES = 20_000;
+
 @injectable()
 export class ProjectScanner {
-  constructor(@inject(TYPES.AstAdapter) private readonly astAdapter: AstAdapter) {}
+  constructor(
+    @inject(TYPES.AstAdapter) private readonly astAdapter: AstAdapter,
+    @inject(TYPES.Logger) private readonly logger: Logger,
+  ) {}
 
   async scan(projectPathInput: string): Promise<ProjectSnapshot> {
     const projectPath = path.resolve(projectPathInput);
@@ -67,18 +87,66 @@ export class ProjectScanner {
     const topLevelDirs = await listDirs(projectPath);
     const libDirs = libExists ? await listDirs(path.join(projectPath, 'lib')) : [];
 
-    const dartPaths = await fg(['**/*.dart'], {
+    // SECURITY: followSymbolicLinks:false stops fast-glob from recursing into
+    // a symlinked directory inside the scanned project (which could point
+    // anywhere on the host, e.g. the user's home directory — turning one
+    // symlink into an unbounded scan of unrelated files). The realpath
+    // containment check below additionally catches a symlinked *file*
+    // (which followSymbolicLinks:false alone does not exclude from the
+    // match list) pointing outside the project root, e.g.
+    // lib/x.dart -> ~/.ssh/id_rsa. This mirrors the followSymbolicLinks:false
+    // already used for the server's own repo scans in filesystem-search.ts
+    // and repository-indexer.ts — this was the one scan surface missing it,
+    // and it's the highest-risk one (arbitrary third-party projects).
+    let dartPaths = await fg(['**/*.dart'], {
       cwd: projectPath,
       absolute: false,
       onlyFiles: true,
       ignore: [...IGNORE],
+      followSymbolicLinks: false,
     });
 
+    if (dartPaths.length > MAX_DART_FILES) {
+      this.logger.warning('Project scan matched more Dart files than the safety cap; truncating', {
+        projectPath,
+        matched: dartPaths.length,
+        cap: MAX_DART_FILES,
+      });
+      dartPaths = dartPaths.slice(0, MAX_DART_FILES);
+    }
+
+    const projectRealRoot = await realpath(projectPath);
     const dartFiles: DartFileInfo[] = [];
     const importEdges: { from: string; to: string }[] = [];
 
     for (const relativePath of dartPaths) {
       const absolutePath = path.join(projectPath, relativePath);
+
+      let resolvedReal: string;
+      try {
+        resolvedReal = await realpath(absolutePath);
+      } catch {
+        continue; // broken symlink or vanished mid-scan; skip silently
+      }
+
+      if (resolvedReal !== projectRealRoot && !resolvedReal.startsWith(projectRealRoot + path.sep)) {
+        this.logger.warning('Skipping file whose symlink resolves outside the project root', {
+          projectPath,
+          relativePath,
+        });
+        continue;
+      }
+
+      const stats = await stat(resolvedReal);
+      if (stats.size > MAX_FILE_BYTES) {
+        this.logger.warning('Skipping Dart file exceeding the size safety cap', {
+          relativePath,
+          bytes: stats.size,
+          cap: MAX_FILE_BYTES,
+        });
+        continue;
+      }
+
       const content = await readFile(absolutePath, 'utf8');
       const normalized = relativePath.replaceAll('\\', '/');
       const imports = extractImports(content);

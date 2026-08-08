@@ -6,8 +6,8 @@ import { TYPES } from '../types/tokens.js';
 import { toolFail, toolOk, type ToolResult } from './tool-result.js';
 
 export const TraceWidgetInputSchema = z.object({
-  symbol: z.string().min(1).describe('Widget or class name to trace'),
-  repository: z.string().min(1).optional(),
+  symbol: z.string().min(1).max(200).describe('Widget or class name to trace'),
+  repository: z.string().min(1).max(200).optional(),
   depth: z.number().int().positive().max(5).optional(),
 });
 

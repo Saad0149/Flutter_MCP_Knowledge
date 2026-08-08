@@ -23,6 +23,7 @@ export const ReviewProjectInputSchema = z.object({
   path: z
     .string()
     .min(1)
+    .max(4096)
     .describe('Absolute or relative path to a Flutter/Dart project root'),
   limit: z.number().int().positive().max(300).optional(),
   detail: z

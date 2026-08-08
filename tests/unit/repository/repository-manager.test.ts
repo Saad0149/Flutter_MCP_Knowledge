@@ -184,6 +184,48 @@ describe('GitRepositoryManager', () => {
     });
   });
 
+  it('SECURITY: updateOne refuses to start while a background clone of the same repo is already running', async () => {
+    // Regression: updateOne() used to call updateRepository() directly,
+    // bypassing inProgressSet entirely — a concurrent startBackgroundUpdate()
+    // (or another updateOne()) call for the same repo could race two git
+    // processes against the same target directory. Both entry points now
+    // share the same guard.
+    tempDir = await createTempDir('repo-updateone-race-');
+    const reposRoot = path.join(tempDir, 'repos');
+    const { definition } = await createLocalGitRemote(tempDir, 'raceddemo', {
+      'lib/widget.dart': 'class RacedWidget {}\n',
+    });
+
+    const manager = new GitRepositoryManager(
+      { repositoriesRoot: reposRoot },
+      new SilentLogger(),
+      [definition],
+    );
+
+    const queued = manager.startBackgroundUpdate();
+    expect(queued[0]?.status).toBe('queued');
+
+    // Same repo, called synchronously while the background clone is still
+    // running — must be rejected, not race a second `git clone` into the
+    // same directory.
+    await expect(manager.updateOne(definition.name)).rejects.toMatchObject({ code: 'GitError' });
+
+    // Let background work complete before teardown.
+    await new Promise<void>((resolve) => {
+      const check = setInterval(async () => {
+        const status = await manager.getStatus(definition.name);
+        if (status[0]?.exists && !status[0]?.cloneInProgress) {
+          clearInterval(check);
+          resolve();
+        }
+      }, 50);
+    });
+
+    // Now that the background clone is done, a fresh updateOne() works normally.
+    const result = await manager.updateOne(definition.name);
+    expect(result.status).toBe('already_up_to_date');
+  });
+
   it('repository_status reports cloneInProgress=true while background clone runs', async () => {
     tempDir = await createTempDir('repo-status-inprog-');
     const reposRoot = path.join(tempDir, 'repos');

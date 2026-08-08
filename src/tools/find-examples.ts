@@ -6,7 +6,7 @@ import { TYPES } from '../types/tokens.js';
 import { toolFail, toolOk, type ToolResult } from './tool-result.js';
 
 export const FindExamplesInputSchema = z.object({
-  topic: z.string().min(1).describe('Topic or symbol to find examples for'),
+  topic: z.string().min(1).max(200).describe('Topic or symbol to find examples for'),
   limit: z.number().int().positive().max(100).optional(),
 });
 

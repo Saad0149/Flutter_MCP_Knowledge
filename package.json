@@ -1,12 +1,19 @@
 {
   "name": "flutter-knowledge-mcp",
   "version": "1.0.0",
-  "description": "Flutter Analysis Engine exposed via MCP — insightful static analysis for Flutter/Dart projects",
+  "description": "MCP server exposing a 9-analyzer Flutter/Dart static analysis engine (code quality, architecture, state management, complexity, dependencies, performance, documentation, testing, accessibility) plus official Flutter/Dart knowledge search — for Cursor, Claude Code, and other MCP clients.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
     "flutter-knowledge-mcp": "./dist/index.js"
   },
+  "files": [
+    "dist/**",
+    "parser/bin/**",
+    "parser/pubspec.yaml",
+    "config.json",
+    "mcp.example.json"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/index.ts",
@@ -24,17 +31,34 @@
   },
   "keywords": [
     "mcp",
+    "model-context-protocol",
     "flutter",
     "dart",
-    "cursor"
+    "static-analysis",
+    "code-quality",
+    "code-review",
+    "cursor",
+    "claude",
+    "claude-code",
+    "ai-agent",
+    "llm-tools"
   ],
+  "author": "Saad Hassan",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Saad0149/Flutter_MCP_Knowledge.git"
+  },
+  "homepage": "https://github.com/Saad0149/Flutter_MCP_Knowledge#readme",
+  "bugs": {
+    "url": "https://github.com/Saad0149/Flutter_MCP_Knowledge/issues"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "better-sqlite3": "^13.0.2",
+    "better-sqlite3": "13.0.2",
     "fast-glob": "^3.3.3",
     "reflect-metadata": "^0.2.2",
-    "simple-git": "^3.36.0",
+    "simple-git": "3.36.0",
     "tsyringe": "^4.10.0",
     "zod": "^3.25.76"
   },

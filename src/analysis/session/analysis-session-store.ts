@@ -17,6 +17,13 @@ export interface StoredAnalysisSession {
 }
 
 /**
+ * Every sessionId this store ever writes is `randomUUID().replace(/-/g,
+ * '').slice(0, 16)` — exactly 16 lowercase hex characters. Anything else is
+ * definitionally not a session this server issued.
+ */
+const SESSION_ID_PATTERN = /^[0-9a-f]{16}$/;
+
+/**
  * Persists full analysis reports so follow-up MCP tools query the cache
  * instead of rescanning the project.
  */
@@ -66,6 +73,19 @@ export class AnalysisSessionStore {
   }
 
   async get(sessionId: string): Promise<StoredAnalysisSession> {
+    // SECURITY: sessionId reaches this point straight from a tool argument
+    // (12 tools accept it) with no upstream format check. Without this
+    // guard, path.join happily resolves ".." segments — a sessionId of
+    // "../../../../etc/some-file" escapes sessionsDir() entirely and reads
+    // an arbitrary .json file on the host. Reject anything that isn't
+    // exactly the shape this server itself ever generates.
+    if (!SESSION_ID_PATTERN.test(sessionId)) {
+      throw new AppError(
+        'InvalidArguments',
+        `Invalid sessionId "${sessionId}" — expected a 16-character hex session id from review_project.`,
+      );
+    }
+
     const file = path.join(this.sessionsDir(), `${sessionId}.json`);
     try {
       const raw = await readFile(file, 'utf8');

@@ -7,6 +7,7 @@ import type {
   ProjectAnalysisEngine,
   ProjectSnapshot,
 } from '../types.js';
+import { detectCycles } from './detect-cycles.js';
 import { finding } from './finding-factory.js';
 
 export interface LayerViolation {
@@ -266,46 +267,6 @@ function detectLayerViolations(snapshot: ProjectSnapshot): LayerViolation[] {
     }
   }
   return violations;
-}
-
-function detectCycles(
-  edges: readonly { readonly from: string; readonly to: string }[],
-): string[] {
-  const graph = new Map<string, string[]>();
-  for (const e of edges) {
-    const list = graph.get(e.from) ?? [];
-    list.push(e.to);
-    graph.set(e.from, list);
-  }
-
-  const cycles: string[] = [];
-  const visiting = new Set<string>();
-  const visited = new Set<string>();
-  const stack: string[] = [];
-
-  const dfs = (node: string): void => {
-    if (visited.has(node)) return;
-    if (visiting.has(node)) {
-      const idx = stack.indexOf(node);
-      if (idx >= 0) cycles.push([...stack.slice(idx), node].join(' → '));
-      return;
-    }
-    visiting.add(node);
-    stack.push(node);
-    for (const next of graph.get(node) ?? []) {
-      dfs(next);
-      if (cycles.length >= 25) return;
-    }
-    stack.pop();
-    visiting.delete(node);
-    visited.add(node);
-  };
-
-  for (const node of graph.keys()) {
-    dfs(node);
-    if (cycles.length >= 25) break;
-  }
-  return cycles;
 }
 
 function detectVersionPinning(pubspecRaw: string): boolean {

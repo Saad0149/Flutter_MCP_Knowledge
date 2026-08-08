@@ -24,11 +24,13 @@ export const AnalyzeArchitectureInputObjectSchema = z.object({
   sessionId: z
     .string()
     .min(1)
+    .max(64)
     .optional()
     .describe('Session from review_project — preferred; skips rescanning'),
   path: z
     .string()
     .min(1)
+    .max(4096)
     .optional()
     .describe('Project path — used only when sessionId is omitted (triggers analysis)'),
   limit: z.number().int().positive().max(200).optional(),
