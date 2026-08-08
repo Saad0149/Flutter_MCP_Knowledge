@@ -1,14 +1,22 @@
 import type { AnalysisFinding, HealthScore, PriorityAction } from '../types.js';
 import type { ProjectAnalysisReport } from '../insight/project-report-builder.js';
-import { sampleFilesFor } from '../../tools/tool-response-helpers.js';
+import { hasEvidenceFor, sampleFilesFor } from '../../tools/tool-response-helpers.js';
 
 export interface TopRiskCard {
   readonly title: string;
   readonly sampleFiles: readonly string[];
+  /**
+   * False when the underlying finding has no evidence at all to draw file
+   * paths from (distinct from having evidence that just isn't file-shaped —
+   * an empty sampleFiles with hasEvidence:true is a legitimate "no files to
+   * show", not a gap).
+   */
+  readonly hasEvidence: boolean;
 }
 
 export interface TopActionCard extends PriorityAction {
   readonly sampleFiles: readonly string[];
+  readonly hasEvidence: boolean;
 }
 
 /** Compact finding card for chat — no nested evidence dumps. */
@@ -31,6 +39,10 @@ export interface ScoreCard {
   readonly confidence?: number;
   readonly topPositives: readonly string[];
   readonly topNegatives: readonly string[];
+  /** True when `value` is a floor/ceiling clamp of a more extreme raw score. */
+  readonly clamped?: boolean;
+  /** The pre-clamp computed value. Only present when `clamped` is true. */
+  readonly rawValue?: number;
 }
 
 export interface ReviewProjectSummary {
@@ -46,6 +58,15 @@ export interface ReviewProjectSummary {
    */
   readonly fidelityNotice?: string;
   readonly overview: string;
+  /**
+   * Internally-detected inconsistencies in this report — e.g. a score that
+   * clamped to a floor/ceiling despite net-opposite listed contributors, or
+   * two fields disagreeing on the primary detected architecture pattern.
+   * Present only when a check actually fails; absent otherwise. A safety
+   * net for regressions of this class of bug, not a substitute for fixing
+   * the underlying cause.
+   */
+  readonly dataQualityWarnings?: readonly string[];
   readonly topRisks: readonly TopRiskCard[];
   readonly topStrengths: readonly string[];
   readonly topActions: readonly TopActionCard[];
@@ -88,6 +109,7 @@ export function toScoreCard(s: HealthScore): ScoreCard {
       .filter((c) => c.delta !== 0)
       .slice(0, 3)
       .map((c) => `${c.delta} ${c.label}`),
+    ...(s.clamped ? { clamped: true, rawValue: s.rawValue } : {}),
   };
 }
 
@@ -117,6 +139,7 @@ function topRiskCards(findings: readonly AnalysisFinding[], max: number): TopRis
     .map((f) => ({
       title: `${f.title} (confidence ${(f.confidence * 100).toFixed(0)}%, source=${f.source})`,
       sampleFiles: sampleFilesFor(f),
+      hasEvidence: hasEvidenceFor(f),
     }));
 }
 
@@ -129,6 +152,7 @@ function topActionCards(
   return actions.slice(0, max).map((action) => ({
     ...action,
     sampleFiles: sampleFilesFor(byCode.get(action.findingCode)),
+    hasEvidence: hasEvidenceFor(byCode.get(action.findingCode)),
   }));
 }
 
@@ -139,6 +163,10 @@ export function buildReviewSummary(
   const cards = report.findings.map(toFindingCard);
   const isDegraded =
     report.analysisSummary.astSource === 'heuristic' || report.analysisSummary.coverage !== 'full';
+  const dataQualityWarnings = [
+    ...checkScoreClampSanity(report.health.scores),
+    ...checkArchitectureAgreement(report),
+  ];
 
   return {
     sessionId,
@@ -156,6 +184,7 @@ export function buildReviewSummary(
         `Call check_environment to see why the Dart analyzer wasn't used and how to fix it.`
       : undefined,
     overview: report.insight.overview,
+    ...(dataQualityWarnings.length > 0 ? { dataQualityWarnings } : {}),
     topRisks: topRiskCards(report.findings, 5),
     topStrengths: report.healthReport.topStrengths.slice(0, 5),
     topActions: topActionCards(report.topActions, report.findings, 5),
@@ -174,6 +203,55 @@ export function buildReviewSummary(
       note: 'Set detail="full" on review_project only if you explicitly need the entire report in chat.',
     },
   };
+}
+
+/**
+ * Regression guard for Bug 1 (0/100 code-quality score with net-positive
+ * listed contributors): flags any score that landed on its floor/ceiling
+ * while its own listed contributors point the other way. `clamped`/`rawValue`
+ * (set by ScoringEngine's finalize/compose) tell us the value really was
+ * clamped, not just coincidentally equal to 0 or max.
+ */
+export function checkScoreClampSanity(scores: readonly HealthScore[]): string[] {
+  const warnings: string[] = [];
+  for (const s of scores) {
+    if (!s.clamped) continue;
+    const positiveSum = (s.positiveContributors ?? []).reduce((sum, c) => sum + c.delta, 0);
+    const negativeSum = (s.negativeContributors ?? []).reduce((sum, c) => sum + c.delta, 0);
+    if (s.value === 0 && positiveSum > Math.abs(negativeSum)) {
+      warnings.push(
+        `${s.label} score clamped to 0 (raw ${s.rawValue}) despite net-positive listed contributors ` +
+          `(+${positiveSum} vs ${negativeSum}) — the shown positives don't obviously explain the floor.`,
+      );
+    } else if (s.value === s.max && negativeSum < -Math.abs(positiveSum)) {
+      warnings.push(
+        `${s.label} score clamped to ${s.max} (raw ${s.rawValue}) despite net-negative listed contributors ` +
+          `(+${positiveSum} vs ${negativeSum}) — the shown negatives don't obviously explain the ceiling.`,
+      );
+    }
+  }
+  return warnings;
+}
+
+/**
+ * Regression guard for Bug 2 (review_project narrative and analyze_architecture
+ * disagreeing on the primary detected pattern): both now derive from
+ * ArchitectureMatchEngine's result (architectureDetection.detected), but this
+ * check catches any future re-divergence rather than silently shipping it.
+ */
+export function checkArchitectureAgreement(
+  report: Pick<ProjectAnalysisReport, 'findings' | 'architectureDetection'>,
+): string[] {
+  if (!report.architectureDetection?.detected) return [];
+  const detectedFinding = report.findings.find((f) => f.code === 'DetectedArchitecture');
+  const primary = report.architectureDetection.detected.architecture;
+  if (detectedFinding && !detectedFinding.title.includes(primary)) {
+    return [
+      `Architecture detection disagreement: the DetectedArchitecture finding says "${detectedFinding.title}" ` +
+        `but the authoritative match (ArchitectureMatchEngine) is "${primary}" (${report.architectureDetection.detected.confidence}%).`,
+    ];
+  }
+  return [];
 }
 
 export function filterFindingsByCategory(

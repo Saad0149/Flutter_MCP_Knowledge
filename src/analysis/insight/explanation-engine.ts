@@ -8,6 +8,7 @@ import { FindingRelationshipEngine } from '../relationships/finding-relationship
 import type {
   AnalysisFinding,
   AnalysisSummary,
+  ArchitectureMatch,
   EvidenceItem,
   OfficialReference,
   ProjectInsight,
@@ -55,9 +56,21 @@ export class ExplanationEngine {
     readonly codeQuality: CodeQualityFacts;
     readonly stateManagement: StateManagementFacts;
     readonly technicalDebt?: TechnicalDebtReport;
+    /**
+     * The authoritative primary architecture match from ArchitectureMatchEngine.
+     * Optional only for callers that predate this field; when omitted, falls
+     * back to `architecture.detectedArchitecture`/`architecture.confidence`
+     * (ArchitectureAnalyzer's own single-candidate guess), which can disagree
+     * with ArchitectureMatchEngine's multi-candidate result.
+     */
+    readonly architectureDetection?: Pick<ArchitectureMatch, 'architecture' | 'confidence'>;
   }): ProjectInsight {
     const { snapshot, summary, metrics, architecture, codeQuality, stateManagement, findings } =
       input;
+    const detected = input.architectureDetection ?? {
+      architecture: architecture.detectedArchitecture,
+      confidence: architecture.confidence,
+    };
 
     const packageLabel = snapshot.packageName ?? 'this project';
     const astNote =
@@ -65,7 +78,7 @@ export class ExplanationEngine {
         ? `Symbols were extracted with the Dart Analyzer (${summary.coverage} coverage, aggregate confidence ${(summary.confidence * 100).toFixed(0)}%).`
         : `Symbols were extracted with the heuristic fallback (${summary.coverage} coverage, aggregate confidence ${(summary.confidence * 100).toFixed(0)}%). ${summary.recommendation ?? ''}`.trim();
 
-    const architectureNarrative = buildArchitectureNarrative(architecture, metrics);
+    const architectureNarrative = buildArchitectureNarrative(architecture, metrics, detected);
     const stateNarrative = buildStateNarrative(stateManagement);
     const qualityNarrative = buildQualityNarrative(codeQuality, findings);
 
@@ -87,7 +100,7 @@ export class ExplanationEngine {
 
     const overview = [
       `${packageLabel} looks like a ${snapshot.isFlutterProject ? 'Flutter' : 'Dart'} project with ${metrics.libFileCount} lib files, ${metrics.widgetCount} widgets, and ${metrics.linesOfCode} lines of Dart.`,
-      `Closest matching architecture: ${architecture.detectedArchitecture} (detection confidence ${architecture.confidence}%). Dependency picture: ${architecture.dependencyDirectionSummary}.`,
+      `Closest matching architecture: ${detected.architecture} (detection confidence ${detected.confidence}%). Dependency picture: ${architecture.dependencyDirectionSummary}.`,
       `State approaches in play: ${stateManagement.detectedApproaches.join(', ') || 'unknown'}.`,
       astNote,
       topRisks.length > 0
@@ -208,7 +221,11 @@ function tradeoffsFor(f: AnalysisFinding): string[] {
   }
 }
 
-function buildArchitectureNarrative(facts: ArchitectureFacts, metrics: ProjectMetrics): string {
+function buildArchitectureNarrative(
+  facts: ArchitectureFacts,
+  metrics: ProjectMetrics,
+  detected: Pick<ArchitectureMatch, 'architecture' | 'confidence'>,
+): string {
   const layers = [
     facts.hasPresentation ? 'presentation' : null,
     facts.hasDomain ? 'domain' : null,
@@ -219,7 +236,7 @@ function buildArchitectureNarrative(facts: ArchitectureFacts, metrics: ProjectMe
   ].filter(Boolean);
 
   return [
-    `Detected structure is "${facts.detectedArchitecture}" with ${facts.confidence}% confidence from folder layout and import edges — not an LLM guess.`,
+    `Detected structure is "${detected.architecture}" with ${detected.confidence}% confidence from folder layout and import edges — not an LLM guess.`,
     layers.length > 0
       ? `Observed layers/modules: ${layers.join(', ')}.`
       : 'No clear domain/data/presentation/feature folders were observed under lib/.',

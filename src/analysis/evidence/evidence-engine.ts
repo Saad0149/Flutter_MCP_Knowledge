@@ -117,8 +117,15 @@ export class EvidenceEngine {
     }
 
     if (finding.code === 'GodClassCandidate') {
+      // CodeQualityAnalyzer emits GodClassCandidate evidence as
+      // "Name @ path/to/file.dart: score=N, conf=P%, signals=a|b|c" — NOT the
+      // "Name (path/to/file.dart)" shape the old regex here expected (that
+      // shape belongs to the separate, unused `godClassCandidates` legacy
+      // field). The mismatch meant this branch silently matched nothing,
+      // leaving GodClassCandidate's evidenceItems without a `file`, which is
+      // what sampleFilesFor() reads to build topRisks/topActions sampleFiles.
       for (const raw of finding.evidence.slice(0, 10)) {
-        const m = /^(\w+)\s+\((.+)\)$/.exec(raw);
+        const m = /^(\w+)\s+@\s+(.+?\.dart):/.exec(raw);
         if (m) {
           const file = m[2]!;
           const symbol = m[1]!;

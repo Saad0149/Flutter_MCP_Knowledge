@@ -172,6 +172,22 @@ export class ProjectReportBuilder {
     });
 
     const architectureDetection = this.architectureMatches.match(architecture.facts);
+    // ArchitectureMatchEngine is the single authoritative source for the
+    // detected primary pattern (it scores ALL candidates and picks the
+    // highest-confidence one). ArchitectureAnalyzer's own detectedArchitecture
+    // field is only a single-candidate first-match guess used to seed that
+    // scoring — realign the DetectedArchitecture finding to the authoritative
+    // result so it never disagrees with architectureDetection.detected (Bug 2).
+    merged = merged.map((f) =>
+      f.code === 'DetectedArchitecture'
+        ? {
+            ...f,
+            title: `Detected architecture: ${architectureDetection.detected.architecture}`,
+            description: `Confidence ${architectureDetection.detected.confidence}% based on folder layout and import facts (not a guess).`,
+            confidence: architectureDetection.detected.confidence / 100,
+          }
+        : f,
+    );
 
     const analysisSummary = buildAnalysisSummary(snapshot.astMeta, merged);
     const insight = this.explanation.explain({
@@ -183,6 +199,7 @@ export class ProjectReportBuilder {
       codeQuality: codeQuality.facts,
       stateManagement: stateManagement.facts,
       technicalDebt,
+      architectureDetection: architectureDetection.detected,
     });
     const health = this.healthScorer.score({
       snapshot,

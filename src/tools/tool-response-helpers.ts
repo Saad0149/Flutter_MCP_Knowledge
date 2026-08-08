@@ -155,6 +155,17 @@ export function sampleFilesFor(finding: AnalysisFinding | undefined, max = 3): r
   return findingPaths(finding).slice(0, max);
 }
 
+/**
+ * Whether a finding has any evidence attached at all (raw strings or
+ * structured items) — distinct from `sampleFilesFor` returning zero paths,
+ * which can legitimately happen when evidence exists but isn't file-shaped.
+ * Lets callers tell "no files to show" apart from "nothing to show at all".
+ */
+export function hasEvidenceFor(finding: AnalysisFinding | undefined): boolean {
+  if (!finding) return false;
+  return finding.evidence.length > 0 || (finding.evidenceItems?.length ?? 0) > 0;
+}
+
 export interface SizeMetadata {
   readonly bytes: number;
   readonly approxTokens: number;

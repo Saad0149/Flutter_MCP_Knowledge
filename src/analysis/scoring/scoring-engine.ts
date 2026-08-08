@@ -18,6 +18,39 @@ import type {
 } from '../types.js';
 
 /**
+ * Finding codes owned by PerformanceAnalyzer, AccessibilityAnalyzer, and
+ * DocumentationAnalyzer. Those three analyzers share the 'flutter'/'dart'
+ * FindingCategory values with CodeQualityAnalyzer and ComplexityAnalyzer,
+ * but each already feeds a dedicated score component (scorePerformance,
+ * scoreAccessibility, scoreDocumentation) directly from its own computed
+ * score — so scoreCodeQuality must exclude them to avoid double-counting.
+ */
+const FINDINGS_SCORED_ELSEWHERE = new Set([
+  // PerformanceAnalyzer
+  'LargeBuildMethod',
+  'CompactBuildMethods',
+  'LegacyNewKeywordUsage',
+  'HeavySetStateUsage',
+  'AnimationControllerLeak',
+  'ListViewBuilderMisuse',
+  'ImageWithoutCacheHints',
+  // AccessibilityAnalyzer
+  'NoSemanticsWidgets',
+  'SemanticsWidgetsPresent',
+  'ImagesWithoutSemanticLabels',
+  'IconButtonsWithoutTooltip',
+  'CustomPainterAccessibility',
+  // DocumentationAnalyzer
+  'UndocumentedWidgets',
+  'WellDocumentedWidgets',
+  'MissingAnalysisOptions',
+  'HasAnalysisOptions',
+  'MissingPubspecDescription',
+  'MissingReadme',
+  'LowInlineComments',
+]);
+
+/**
  * Transparent scoring — every score lists positive/negative contributors.
  * Replaces opaque numeric-only health scores while remaining back-compat.
  * New analyzer facts are optional to preserve backward compatibility.
@@ -173,6 +206,14 @@ export class ScoringEngine {
 
     for (const f of input.findings) {
       if (!['oop', 'solid', 'dart', 'flutter', 'data_structures'].includes(f.category)) continue;
+      // PerformanceAnalyzer, AccessibilityAnalyzer, and DocumentationAnalyzer also
+      // emit 'flutter'/'dart'-category findings, but each already has its own
+      // dedicated score component below computed straight from that analyzer's
+      // own score field (not summed from findings) — counting their findings
+      // here too would double-penalize the same signal. ComplexityAnalyzer has
+      // no dedicated score component, so its 'flutter'-category findings are
+      // intentionally still counted here.
+      if (FINDINGS_SCORED_ELSEWHERE.has(f.code)) continue;
       const delta = Math.round((f.scoreImpact ?? 0) * f.confidence);
       if (delta === 0) continue;
       if (delta > 0) {
@@ -502,22 +543,26 @@ function finalize(
   confidence: number,
   calculation: string,
 ): HealthScore {
-  const clamped = clamp(value);
+  const clampedValue = clamp(value);
+  const isClamped = clampedValue !== Math.round(value);
   return {
     id,
     label,
-    value: clamped,
+    value: clampedValue,
     max: 100,
     calculation,
     inputsUsed: [
       ...positives.map((p) => `+${p.delta} ${p.label}`),
       ...negatives.map((n) => `${n.delta} ${n.label}`),
       `confidence=${Math.round(confidence * 100)}%`,
+      ...(isClamped ? [`clamped from raw ${Math.round(value)} to ${clampedValue}`] : []),
     ],
     positiveContributors: positives,
     negativeContributors: negatives,
     weight: 1,
     confidence: round(confidence),
+    clamped: isClamped,
+    ...(isClamped ? { rawValue: Math.round(value) } : {}),
   };
 }
 
@@ -527,9 +572,9 @@ function compose(
   parts: readonly { score: HealthScore; weight: number }[],
   calculation: string,
 ): HealthScore {
-  const value = clamp(
-    parts.reduce((sum, p) => sum + p.score.value * p.weight, 0),
-  );
+  const rawValue = parts.reduce((sum, p) => sum + p.score.value * p.weight, 0);
+  const value = clamp(rawValue);
+  const isClamped = value !== Math.round(rawValue);
   const confidence = round(
     parts.reduce((sum, p) => sum + (p.score.confidence ?? 0.8) * p.weight, 0),
   );
@@ -539,7 +584,10 @@ function compose(
     value,
     max: 100,
     calculation,
-    inputsUsed: parts.map((p) => `${p.score.id}=${p.score.value} (w=${p.weight})`),
+    inputsUsed: [
+      ...parts.map((p) => `${p.score.id}=${p.score.value} (w=${p.weight})`),
+      ...(isClamped ? [`clamped from raw ${Math.round(rawValue)} to ${value}`] : []),
+    ],
     positiveContributors: parts.map((p) => ({
       label: p.score.label,
       delta: Math.round(p.score.value * p.weight),
@@ -547,6 +595,8 @@ function compose(
     negativeContributors: [],
     weight: 1,
     confidence,
+    clamped: isClamped,
+    ...(isClamped ? { rawValue: Math.round(rawValue) } : {}),
   };
 }
 

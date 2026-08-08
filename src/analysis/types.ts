@@ -197,6 +197,14 @@ export interface HealthScore {
   readonly negativeContributors?: readonly ScoreContributor[];
   readonly weight?: number;
   readonly confidence?: number;
+  /**
+   * True when `value` was floor/ceiling-clamped to [0, max] — i.e. the raw
+   * computed value (see `rawValue`) fell outside that range. Present so a
+   * clamped 0 or 100 is never mistaken for a precise computed result.
+   */
+  readonly clamped?: boolean;
+  /** The pre-clamp computed value. Only meaningful when `clamped` is true. */
+  readonly rawValue?: number;
 }
 
 export interface ProjectHealthReport {
