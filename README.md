@@ -4,17 +4,17 @@ An [MCP](https://modelcontextprotocol.io) server that gives your AI coding agent
 
 ## What it checks — all 9 analyzers
 
-| Analyzer | Checks |
-| --- | --- |
-| **Code quality** | God-class candidates (multi-signal, not just size), missing `const`, legacy `RaisedButton`/`FlatButton`, `print()` calls, modern Dart class modifiers, pattern matching usage |
-| **Architecture** | Detected architecture style (clean/feature-first/layered/MVVM/...), layer-violation imports (presentation→data, domain→Flutter), circular import cycles, feature isolation |
-| **State management** | Which state approach(es) are in use, heavy `setState`, missing `dispose()`, `ChangeNotifier` without a `Provider`, business logic living in widgets |
-| **Complexity** | File-size distribution, estimated high-complexity files, deep nesting, high import counts, oversized widget files |
-| **Dependencies** | Layer violations, circular import cycles, high-fan-out files, deprecated packages, whether dependency versions are pinned |
-| **Performance** | Oversized `build()` methods, legacy `new` keyword usage, `setState` wrapping async/heavy work, `AnimationController` leaks, `ListView` misuse, `Image.network` without cache hints |
-| **Documentation** | Widget/class doc-comment coverage, README/CHANGELOG/`analysis_options.yaml` presence, pubspec description, inline comment ratio |
-| **Testing** | Test-to-lib ratio, widget/golden/integration test presence, features with no tests at all |
-| **Accessibility** | `Semantics` widget usage, images without semantic labels, `IconButton`s without tooltips, `CustomPainter` accessibility |
+| Analyzer             | Checks                                                                                                                                                                             |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Code quality**     | God-class candidates (multi-signal, not just size), missing `const`, legacy `RaisedButton`/`FlatButton`, `print()` calls, modern Dart class modifiers, pattern matching usage      |
+| **Architecture**     | Detected architecture style (clean/feature-first/layered/MVVM/...), layer-violation imports (presentation→data, domain→Flutter), circular import cycles, feature isolation         |
+| **State management** | Which state approach(es) are in use, heavy `setState`, missing `dispose()`, `ChangeNotifier` without a `Provider`, business logic living in widgets                                |
+| **Complexity**       | File-size distribution, estimated high-complexity files, deep nesting, high import counts, oversized widget files                                                                  |
+| **Dependencies**     | Layer violations, circular import cycles, high-fan-out files, deprecated packages, whether dependency versions are pinned                                                          |
+| **Performance**      | Oversized `build()` methods, legacy `new` keyword usage, `setState` wrapping async/heavy work, `AnimationController` leaks, `ListView` misuse, `Image.network` without cache hints |
+| **Documentation**    | Widget/class doc-comment coverage, README/CHANGELOG/`analysis_options.yaml` presence, pubspec description, inline comment ratio                                                    |
+| **Testing**          | Test-to-lib ratio, widget/golden/integration test presence, features with no tests at all                                                                                          |
+| **Accessibility**    | `Semantics` widget usage, images without semantic labels, `IconButton`s without tooltips, `CustomPainter` accessibility                                                            |
 
 Every finding carries a `confidence` score and a `source` (`dart_analyzer` | `heuristic` | `filesystem` | `pubspec` | `import_graph`) — see [Known limitations](#known-limitations) for what that means in practice.
 
@@ -38,7 +38,7 @@ Every finding carries a `confidence` score and a `source` (`dart_analyzer` | `he
 **Claude Code**:
 
 ```bash
-claude mcp add flutter-knowledge -- npx -y flutter-knowledge-mcp
+claude mcp add --scope user flutter-knowledge -- npx -y flutter-knowledge-mcp@latest
 ```
 
 This is the fastest way to try it. For real use, read the note below first — it affects where the (multi-GB) Flutter/Dart knowledge base gets stored.
@@ -85,7 +85,7 @@ npm install
 npm run build
 ```
 
-Optional Dart helper (strongly recommended — see [Known limitations](#known-limitations)):
+`npm install` already ran `dart pub get` inside `parser/` automatically (a `postinstall` script — see [Known limitations](#known-limitations)) if Dart was found on your machine at that point. If it wasn't (or there was no network at the time), run it manually once Dart/network are available:
 
 ```bash
 cd parser && dart pub get && cd ..
@@ -118,50 +118,50 @@ On first use, `flutter/flutter`, `flutter/packages`, `flutter/engine`, `dart-lan
 
 ### Diagnostics — start here
 
-| Tool | What it does |
-| --- | --- |
+| Tool                | What it does                                                                                                                                                                                                 |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `check_environment` | One-call self-diagnostic: is Dart found (and how), what's the Node version, did the SQLite native binding load, are the knowledge-base repos ready. Call this any time something "should just work" doesn't. |
 
 ### Repository management
 
-| Tool | What it does |
-| --- | --- |
+| Tool                  | What it does                                                                                    |
+| --------------------- | ----------------------------------------------------------------------------------------------- |
 | `update_repositories` | Starts background clones/pulls for all official repos; returns immediately with per-repo status |
-| `repository_status` | Existence, branch, commit, last pull time, path — per repo |
-| `reindex` | Builds/refreshes the local SQLite index from cloned repos |
+| `repository_status`   | Existence, branch, commit, last pull time, path — per repo                                      |
+| `reindex`             | Builds/refreshes the local SQLite index from cloned repos                                       |
 
 ### Search & widget knowledge
 
-| Tool | What it does |
-| --- | --- |
-| `search_source` | Search filenames/contents across cloned official repos |
-| `find_widget` | Locate a widget by name (index-first, filesystem fallback) |
-| `explain_widget` | Declaration, inheritance, and docs for a widget from the index |
-| `trace_widget` | Inheritance tree and related symbols |
-| `search_docs` | Search indexed docs, optionally filtered by kind (changelog/migration/guide/cookbook) |
-| `find_examples` | Examples from official samples and `example/` directories |
-| `find_tests` | Tests for a symbol, widget tests preferred |
-| `find_best_practice` | Ranked migration/cookbook/changelog/guide hits for a topic |
+| Tool                     | What it does                                                                                |
+| ------------------------ | ------------------------------------------------------------------------------------------- |
+| `search_source`          | Search filenames/contents across cloned official repos                                      |
+| `find_widget`            | Locate a widget by name (index-first, filesystem fallback)                                  |
+| `explain_widget`         | Declaration, inheritance, and docs for a widget from the index                              |
+| `trace_widget`           | Inheritance tree and related symbols                                                        |
+| `search_docs`            | Search indexed docs, optionally filtered by kind (changelog/migration/guide/cookbook)       |
+| `find_examples`          | Examples from official samples and `example/` directories                                   |
+| `find_tests`             | Tests for a symbol, widget tests preferred                                                  |
+| `find_best_practice`     | Ranked migration/cookbook/changelog/guide hits for a topic                                  |
 | `find_intended_behavior` | Joins widget tests + samples + migrations/docs + source for "how is this meant to be used?" |
 
 **First-use note:** if the knowledge base hasn't been cloned yet, `find_intended_behavior` (and the other knowledge tools above) auto-trigger a background clone and return `{ status: "building", suggestedAction }` immediately instead of blocking for minutes or silently returning nothing. This is expected the first time you use them — retry shortly, or call `repository_status` to watch progress. Once the index is partially built, they serve what's available and note which sources are still missing.
 
 ### Project analysis (session-aware)
 
-| Tool | What it does |
-| --- | --- |
-| `review_project` | Analyze your project once → executive health summary + `sessionId` |
+| Tool                                                                                                                                                                                                                         | What it does                                                                         |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `review_project`                                                                                                                                                                                                             | Analyze your project once → executive health summary + `sessionId`                   |
 | `analyze_code_quality` / `analyze_architecture` / `analyze_state_management` / `analyze_complexity` / `analyze_dependencies` / `analyze_performance` / `analyze_documentation` / `analyze_testing` / `analyze_accessibility` | One slim, scored view per analyzer, from a `sessionId` (no rescan) or a fresh `path` |
-| `explain_finding` | Mentor-style explanation for one finding |
-| `explore_finding` | Full evidence for one finding (files, symbols, refactor suggestions) |
+| `explain_finding`                                                                                                                                                                                                            | Mentor-style explanation for one finding                                             |
+| `explore_finding`                                                                                                                                                                                                            | Full evidence for one finding (files, symbols, refactor suggestions)                 |
 
 Typical flow: `review_project({ path })` → grab `sessionId` → `analyze_*({ sessionId })` for the categories you care about → `explore_finding({ sessionId, findingCode })` to drill into a specific one. Session reports are cached under `data/analysis-sessions/`, so steps after the first don't rescan.
 
 ## Known limitations
 
-- **Heuristic-fallback mode.** Full-fidelity analysis needs the Dart SDK (`dart run package:analyzer` under the hood). Without it, symbol extraction falls back to regex-based heuristics with reduced confidence — findings still show a `confidence`/`source` field so you can tell which mode produced them, and `review_project` surfaces a `fidelityNotice` when this is happening. Call `check_environment` any time to see exactly why (Dart not found vs. found-but-helper-failing) and how to fix it.
-- **Evidence may contain untrusted content.** This server is designed to scan arbitrary third-party Flutter/Dart projects. `evidence`/`snippet` fields in tool responses are raw excerpts from whatever the scanned project (or an indexed repo) actually contains — structurally separate from this server's own narrative fields, but not vetted or sanitized content. See [`SECURITY_DECISIONS.md`](./SECURITY_DECISIONS.md) (§2) for why this is a deliberate tradeoff, not an oversight.
-- **`officialReference` matching is coarse.** Findings link to official docs/source via keyword search (SQL substring matching against indexed doc chunks and titles), not semantic matching — occasionally a reference will be tangentially related rather than exactly on point. Treat it as supporting evidence, not the primary answer.
+- **Heuristic-fallback mode.** Full-fidelity analysis needs the Dart SDK (`dart run package:analyzer` under the hood) *and* that helper's own resolved dependencies (a `postinstall` step handles this automatically when it can — see [Analyzer package wasn't resolvable](#analyzer-package-wasnt-resolvable-dart-found-and-working-but-heuristic-mode-anyway) if it couldn't). Without either, symbol extraction falls back to regex-based heuristics with reduced confidence — findings still show a `confidence`/`source` field so you can tell which mode produced them, and `review_project` surfaces a `fidelityNotice` when this is happening. Call `check_environment` any time to see exactly why (Dart not found vs. found-but-helper-failing, and specifically whether it's an unresolved-dependency issue) and how to fix it.
+- **Evidence may contain untrusted content.** This server is designed to scan arbitrary third-party Flutter/Dart projects. `evidence`/`snippet` fields in tool responses are raw excerpts from whatever the scanned project (or an indexed repo) actually contains — structurally separate from this server's own narrative fields, but not vetted or sanitized content. See `[SECURITY_DECISIONS.md](./SECURITY_DECISIONS.md)` (§2) for why this is a deliberate tradeoff, not an oversight.
+- `officialReference` **matching is coarse.** Findings link to official docs/source via keyword search (SQL substring matching against indexed doc chunks and titles), not semantic matching — occasionally a reference will be tangentially related rather than exactly on point. Treat it as supporting evidence, not the primary answer.
 - **Local-only knowledge, git-cloned.** No GitHub API, no network calls beyond `git clone`/`git pull` against the repos listed above. If those repos are unreachable, the affected knowledge tools degrade gracefully (see the auto-bootstrap note above) rather than failing outright.
 
 ## Architecture
@@ -196,7 +196,7 @@ npm run lint
 npm run dev
 ```
 
-See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for what to include in a bug report or PR.
+See `[CONTRIBUTING.md](./CONTRIBUTING.md)` for what to include in a bug report or PR.
 
 ## Error model
 
@@ -227,6 +227,23 @@ This server does **not** rely solely on inherited PATH — it checks, in order: 
 2. Find its real path: `which dart` (macOS/Linux) or `where dart` (Windows).
 3. Set that exact path as `dartSdkPath` in `config.json` and restart the server — this bypasses PATH entirely, which matters because MCP clients (Cursor, Claude Code, etc.) don't reliably forward a shell-equivalent PATH to spawned servers, and even explicit `PATH=` entries in a client's env config are often passed through literally (no `~` or `$PATH` expansion), so a config value like `PATH=~/flutter/bin:$PATH` silently resolves to nothing useful.
 
+### Analyzer package wasn't resolvable (Dart found and working, but heuristic mode anyway)
+
+Distinct from "Dart not found" above: Dart itself is found and runs fine, but the analyzer helper (`parser/`) fails because **its own dependency — the `analyzer` pub package — was never resolved**. `check_environment` shows this specifically as `dart.helperFailureReason: "analyzer_package_unresolved"` (as opposed to `"other"` for a different helper failure), and the `dart` summary line in `check_environment`'s response spells out the same thing.
+
+Why this happens: `parser/` is a small Dart package with its own dependencies, resolved via `dart pub get`, producing a `pubspec.lock` and `.dart_tool/`. This package ships a pre-resolved `pubspec.lock` and runs `dart pub get` automatically in a `postinstall` script right after `npm install` — but that step only runs if Dart was already found *at install time*, and only succeeds if there was network access *at that moment* (the very first resolve needs to fetch `analyzer` and its dependencies, even with a lockfile pinning exact versions). If either wasn't true — Dart installed after this package, or no network during `npm install` — the helper's dependencies are simply missing, and every analysis silently falls back to heuristic mode until this is fixed.
+
+Fix — run `dart pub get` in the installed package's `parser/` directory once Dart and network are both available:
+
+```bash
+# find the install location, e.g. from your MCP client's server command/args,
+# or (for a global/local npm install) `npm root -g` / `npm root` + this package's name
+cd <path-to-installed-flutter-knowledge-mcp>/parser
+dart pub get
+```
+
+Then call `check_environment` again — no reinstall needed. This is a one-time step; once `parser/.dart_tool/` exists, it isn't repeated.
+
 ### SQLite native binding failed
 
 `check_environment` will show `sqlite.ok: false` with the underlying error. This almost always means `better-sqlite3`'s native binary doesn't match the Node version/OS/architecture actually running the server (e.g. installed under one Node version, run under another; or copied between machines).
@@ -251,9 +268,9 @@ Why this can't be fully prevented from JS: normal error handling (try/catch) onl
 
 ## Security
 
-This server scans arbitrary, potentially-untrusted third-party Flutter/Dart projects by design — see [`SECURITY_DECISIONS.md`](./SECURITY_DECISIONS.md) for the specific tradeoffs that implies and why they're intentional. To report a vulnerability, see [`SECURITY.md`](./SECURITY.md) — please don't file it as a public issue.
+This server scans arbitrary, potentially-untrusted third-party Flutter/Dart projects by design — see `[SECURITY_DECISIONS.md](./SECURITY_DECISIONS.md)` for the specific tradeoffs that implies and why they're intentional. To report a vulnerability, see `[SECURITY.md](./SECURITY.md)` — please don't file it as a public issue.
 
-For non-security bugs, see [`CONTRIBUTING.md`](./CONTRIBUTING.md).
+For non-security bugs, see `[CONTRIBUTING.md](./CONTRIBUTING.md)`.
 
 ## Roadmap (later)
 

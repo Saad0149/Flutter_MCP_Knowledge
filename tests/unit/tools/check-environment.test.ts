@@ -98,6 +98,56 @@ describe('CheckEnvironmentHandler', () => {
       expect(result.data.dart.hint).toMatch(/dart pub get/);
       expect(result.data.overallOk).toBe(false);
       expect(result.data.summary[0]).toMatch(/analyzer helper/);
+      // This message doesn't match the specific unresolved-dependency
+      // signature (see the dedicated test below) — must not be
+      // misclassified as that more specific case.
+      expect(result.data.dart.helperFailureReason).toBe('other');
+    }
+
+    store.close();
+  });
+
+  it('reports dart.helperFailureReason="analyzer_package_unresolved" specifically for the fresh-install postinstall failure mode', async () => {
+    tempDir = await createTempDir('check-env-unresolved-dep-');
+    const store = createSqliteKnowledgeStore(path.join(tempDir, 'unresolveddep.sqlite'));
+
+    const dartAnalyzer = {
+      locate: vi.fn().mockResolvedValue({
+        execPath: '/opt/homebrew/bin/dart',
+        method: 'known_location',
+        attempts: [],
+      }),
+      isAvailable: vi.fn().mockResolvedValue(true),
+      // Real captured error shape (see tests/unit/parser/dart-analyzer-client.test.ts) —
+      // parser/'s own pub dependencies were never resolved.
+      verifyHelperEndToEnd: vi.fn().mockResolvedValue({
+        ok: false,
+        error:
+          "dart helper exited with code 254: \"Got socket error trying to find package analyzer at " +
+          "http://127.0.0.1:1.\\nError: Couldn't resolve the package 'analyzer' in " +
+          "'package:analyzer/dart/analysis/analysis_context_collection.dart'.\"",
+      }),
+    } as unknown as DartAnalyzerClient;
+
+    const repositories = {
+      getStatus: vi.fn().mockResolvedValue([fakeRepoStatus('flutter/flutter', true)]),
+    } as unknown as RepositoryManager;
+
+    const handler = new CheckEnvironmentHandler(dartAnalyzer, store, repositories);
+    const result = await handler.execute();
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.dart.found).toBe(true);
+      expect(result.data.dart.versionCheckPassed).toBe(true);
+      expect(result.data.dart.helperRunOk).toBe(false);
+      expect(result.data.dart.helperFailureReason).toBe('analyzer_package_unresolved');
+      // The summary/hint must be specific — not the generic "helper failed" text.
+      expect(result.data.summary[0]).toMatch(/never resolved/);
+      expect(result.data.summary[0]).toMatch(/dart pub get/);
+      expect(result.data.dart.hint).toMatch(/dart pub get/);
+      expect(result.data.dart.hint).toMatch(/parser/);
+      expect(result.data.overallOk).toBe(false);
     }
 
     store.close();

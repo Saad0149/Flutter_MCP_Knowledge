@@ -1,21 +1,24 @@
 {
   "name": "flutter-knowledge-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "MCP server exposing a 9-analyzer Flutter/Dart static analysis engine (code quality, architecture, state management, complexity, dependencies, performance, documentation, testing, accessibility) plus official Flutter/Dart knowledge search — for Cursor, Claude Code, and other MCP clients.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "flutter-knowledge-mcp": "./dist/index.js"
+    "flutter-knowledge-mcp": "dist/index.js"
   },
   "files": [
     "dist/**",
     "parser/bin/**",
     "parser/pubspec.yaml",
+    "parser/pubspec.lock",
+    "scripts/postinstall.mjs",
     "config.json",
     "mcp.example.json"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "postinstall": "node scripts/postinstall.mjs",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
     "test": "vitest run",
@@ -68,6 +71,7 @@
     "@types/node": "^22.19.3",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
+    "globals": "^14.0.0",
     "prettier": "^3.7.4",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",

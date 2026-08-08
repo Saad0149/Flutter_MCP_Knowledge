@@ -1,5 +1,6 @@
 import eslint from '@eslint/js';
 import eslintConfigPrettier from 'eslint-config-prettier';
+import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
@@ -32,6 +33,15 @@ export default tseslint.config(
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
       'no-console': 'error',
+    },
+  },
+  {
+    // Standalone npm lifecycle scripts (postinstall, etc.) — plain Node
+    // CLI scripts, not part of the src/ structured-logging convention, so
+    // console output here is the point, not an error.
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: globals.node,
     },
   },
 );

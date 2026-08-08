@@ -29,6 +29,40 @@ function extractJsonPayload(stdout: string): string {
   return stdout.slice(markerIndex + JSON_MARKER.length);
 }
 
+/**
+ * Signatures the Dart frontend/pub tooling is known to produce when the
+ * analyzer helper's own dependencies (parser/'s package:analyzer,
+ * package:path) were never resolved — i.e. no .dart_tool/package_config.json
+ * and pub get never ran (or failed). Verified directly: running the helper
+ * against an unresolved parser/ (no cached packages, unreachable
+ * PUB_HOSTED_URL) produces "Got socket error trying to find package ..."
+ * followed by "Error: Couldn't resolve the package 'analyzer' in ..." and
+ * "Not found: 'package:analyzer/...'" compile errors.
+ *
+ * This is the expected failure mode on a fresh npm install when
+ * scripts/postinstall.mjs's `dart pub get` was skipped (Dart not found at
+ * install time) or failed (no network at install time) — distinct from
+ * "Dart itself isn't found/working", which is a separate, earlier check
+ * (see DartLocateResult.execPath).
+ */
+const UNRESOLVED_ANALYZER_DEPENDENCY_SIGNATURES = [
+  "couldn't resolve the package",
+  "not found: 'package:analyzer/",
+  "not found: 'package:path/",
+  'got socket error trying to find package',
+  'error while trying to load the package',
+  'pubspec.lock file could not be produced',
+];
+
+/** Exported for check_environment and direct unit testing against real error shapes. */
+export function isLikelyUnresolvedAnalyzerDependency(error: string | undefined | null): boolean {
+  if (!error) {
+    return false;
+  }
+  const lower = error.toLowerCase();
+  return UNRESOLVED_ANALYZER_DEPENDENCY_SIGNATURES.some((signature) => lower.includes(signature));
+}
+
 export interface AnalyzerSymbol {
   readonly name: string;
   readonly kind: string;

@@ -1,5 +1,11 @@
 # Files and directories created by pub
 .dart_tool/
 .packages
-pubspec.lock
 build/
+
+# pubspec.lock is intentionally tracked (not ignored): this is an
+# application-style helper, not a published Dart library, so we pin exact
+# resolved versions for reproducibility — same reasoning as committing
+# package-lock.json at the repo root. It's shipped in the npm package (see
+# "files" in package.json) and installed via `dart pub get --offline` first
+# in scripts/postinstall.mjs, falling back to a normal (online) `pub get`.

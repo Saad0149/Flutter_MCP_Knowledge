@@ -2,7 +2,10 @@ import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AppConfig } from '../../../src/config/schema.js';
-import { DartAnalyzerClient } from '../../../src/parser/dart-analyzer-client.js';
+import {
+  DartAnalyzerClient,
+  isLikelyUnresolvedAnalyzerDependency,
+} from '../../../src/parser/dart-analyzer-client.js';
 import { createTempDir, removeTempDir } from '../../helpers/git-fixtures.js';
 import { SilentLogger } from '../../helpers/silent-logger.js';
 
@@ -98,6 +101,55 @@ async function makeFakeDartWithHooksPreambleNoSeparator(
   );
   await chmod(filePath, 0o755);
 }
+
+/**
+ * Reproduces the real failure mode this test file's sibling bug report is
+ * about: parser/'s own pub dependencies (package:analyzer, package:path)
+ * were never resolved — no pubspec.lock/.dart_tool, and (as would happen
+ * with no network at install time) pub can't fetch them either. Captured
+ * verbatim from a real repro: run `dart run` against a copy of
+ * parser/bin/extract_symbols.dart with an unresolved pubspec and
+ * PUB_HOSTED_URL pointed at an unreachable address.
+ */
+async function makeFakeDartWithUnresolvedAnalyzerDependency(filePath: string): Promise<void> {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(
+    filePath,
+    [
+      '#!/bin/sh',
+      'if [ "$1" = "--version" ]; then',
+      '  echo "Fake Dart SDK version: 3.11.4"',
+      '  exit 0',
+      'fi',
+      'if [ "$1" = "run" ]; then',
+      '  echo "Got socket error trying to find package analyzer at http://127.0.0.1:1." >&2',
+      "  echo \"Error: Couldn't resolve the package 'analyzer' in 'package:analyzer/dart/analysis/analysis_context_collection.dart'.\" >&2",
+      "  echo \"bin/extract_symbols.dart:12:8: Error: Not found: 'package:analyzer/dart/analysis/analysis_context_collection.dart'\" >&2",
+      '  exit 254',
+      'fi',
+      'exit 1',
+    ].join('\n'),
+    'utf8',
+  );
+  await chmod(filePath, 0o755);
+}
+
+describe('isLikelyUnresolvedAnalyzerDependency — classification of real error shapes', () => {
+  it.each([
+    "Got socket error trying to find package analyzer at http://127.0.0.1:1.\nError: Couldn't resolve the package 'analyzer' in 'package:analyzer/dart/analysis/analysis_context_collection.dart'.",
+    "bin/extract_symbols.dart:12:8: Error: Not found: 'package:analyzer/dart/analysis/analysis_context_collection.dart'",
+    "bin/extract_symbols.dart:17:8: Error: Not found: 'package:path/path.dart'",
+  ])('recognizes: %s', (message) => {
+    expect(isLikelyUnresolvedAnalyzerDependency(message)).toBe(true);
+  });
+
+  it('does not misclassify an unrelated helper crash as an unresolved dependency', () => {
+    expect(isLikelyUnresolvedAnalyzerDependency('Error: something in the helper genuinely crashed')).toBe(
+      false,
+    );
+    expect(isLikelyUnresolvedAnalyzerDependency(undefined)).toBe(false);
+  });
+});
 
 describe('DartAnalyzerClient diagnostic error surfacing', () => {
   let tempDir: string | undefined;
@@ -215,5 +267,19 @@ describe('DartAnalyzerClient diagnostic error surfacing', () => {
 
     expect(result.ok).toBe(false);
     expect(result.error).toContain('Running bunk output');
+  });
+
+  it('surfaces an unresolved-analyzer-dependency error end to end (the fresh-install postinstall bug)', async () => {
+    tempDir = await createTempDir('dart-client-unresolved-dep-');
+    const fakeDart = path.join(tempDir, 'dart');
+    await makeFakeDartWithUnresolvedAnalyzerDependency(fakeDart);
+
+    const client = new DartAnalyzerClient(fakeConfig(fakeDart), new SilentLogger());
+    const result = await client.verifyHelperEndToEnd();
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("Couldn't resolve the package 'analyzer'");
+    // The exact signal check_environment's helperFailureReason branches on.
+    expect(isLikelyUnresolvedAnalyzerDependency(result.error)).toBe(true);
   });
 });

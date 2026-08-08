@@ -1,6 +1,7 @@
 import { inject, injectable } from 'tsyringe';
 import { z } from 'zod';
 import type { DartAnalyzerClient } from '../parser/dart-analyzer-client.js';
+import { isLikelyUnresolvedAnalyzerDependency } from '../parser/dart-analyzer-client.js';
 import type { DartLocateAttempt, DartLocateMethod } from '../parser/dart-sdk-locator.js';
 import type { RepositoryManager } from '../repository/types.js';
 import type { KnowledgeStore } from '../store/types.js';
@@ -26,6 +27,16 @@ export interface CheckEnvironmentData {
      */
     readonly helperRunOk: boolean;
     readonly helperError?: string;
+    /**
+     * Set when helperRunOk is false and the failure looks specifically like
+     * the analyzer helper's own pub dependencies (package:analyzer,
+     * package:path) were never resolved — e.g. a fresh npm install where
+     * scripts/postinstall.mjs's `dart pub get` was skipped (Dart not found
+     * at install time) or failed (no network at install time). Distinct
+     * from "Dart itself isn't found/working" (see `found`/`versionCheckPassed`
+     * above) and from other helper failures (analyzer crash, SDK mismatch).
+     */
+    readonly helperFailureReason?: 'analyzer_package_unresolved' | 'other';
     readonly attempts: readonly DartLocateAttempt[];
     readonly hint?: string;
   };
@@ -83,6 +94,14 @@ export class CheckEnvironmentHandler {
       const repoStatuses = await this.repositories.getStatus();
       const missing = repoStatuses.filter((r) => !r.exists).map((r) => r.name);
 
+      const unresolvedAnalyzerDep =
+        !helperCheck.ok && isLikelyUnresolvedAnalyzerDependency(helperCheck.error);
+      const helperFailureReason: 'analyzer_package_unresolved' | 'other' | undefined = helperCheck.ok
+        ? undefined
+        : unresolvedAnalyzerDep
+          ? 'analyzer_package_unresolved'
+          : 'other';
+
       const dartSummaryLine = (): string => {
         if (dartOk) {
           return `Dart found via ${located.method} at ${located.execPath}, and the analyzer helper runs successfully end-to-end.`;
@@ -92,6 +111,16 @@ export class CheckEnvironmentHandler {
         }
         if (!versionCheckPassed) {
           return `Dart binary found at ${located.execPath} (via ${located.method}) but failed to execute — check permissions or architecture mismatch.`;
+        }
+        if (unresolvedAnalyzerDep) {
+          return (
+            `Dart found and runs at ${located.execPath}, but the analyzer helper's own dependencies (the ` +
+            `"analyzer" package) were never resolved — no pubspec.lock/.dart_tool for parser/ yet. This is ` +
+            `expected right after a fresh install if Dart wasn't found or there was no network when this ` +
+            `package's postinstall step ran (it runs "dart pub get" automatically when it can). Fix: run ` +
+            `"dart pub get" inside this installed package's parser/ directory now that Dart/network are ` +
+            `available, then call check_environment again to confirm — no need to reinstall.`
+          );
         }
         return `Dart found and runs at ${located.execPath}, but the analyzer helper (parser/bin/extract_symbols.dart) failed: ${helperCheck.error}. This is why analysis falls back to heuristic mode even though Dart itself works — check that "cd parser && dart pub get" has been run for this server, and that the error above isn't an analyzer/SDK mismatch.`;
       };
@@ -114,12 +143,15 @@ export class CheckEnvironmentHandler {
           versionCheckPassed,
           helperRunOk: helperCheck.ok,
           helperError: helperCheck.error,
+          helperFailureReason,
           attempts: located.attempts,
           hint: dartOk
             ? undefined
-            : located.execPath && versionCheckPassed
-              ? 'Dart itself works, but the analyzer helper does not — run "cd parser && dart pub get" for this server, then retry.'
-              : 'Install the Dart SDK, or set "dartSdkPath" in config.json to its full path (e.g. "/Users/you/Documents/flutter/bin/dart").',
+            : unresolvedAnalyzerDep
+              ? 'Run "dart pub get" inside this installed package\'s parser/ directory (Dart/network must be available), then retry — this normally happens automatically on install via postinstall.'
+              : located.execPath && versionCheckPassed
+                ? 'Dart itself works, but the analyzer helper does not — run "cd parser && dart pub get" for this server, then retry.'
+                : 'Install the Dart SDK, or set "dartSdkPath" in config.json to its full path (e.g. "/Users/you/Documents/flutter/bin/dart").',
         },
         node: {
           version: process.version,
