@@ -39,6 +39,7 @@ import { HeuristicSymbolExtractor } from '../../../src/parser/heuristic-extracto
 import { createSqliteKnowledgeStore } from '../../../src/store/sqlite-store.js';
 import { AnalysisSessionStore } from '../../../src/analysis/session/analysis-session-store.js';
 import { AnalyzeArchitectureHandler } from '../../../src/tools/analyze-architecture.js';
+import { ExplainFindingHandler } from '../../../src/tools/explain-finding.js';
 import { ReviewProjectHandler } from '../../../src/tools/review-project.js';
 import { createTempDir, removeTempDir } from '../../helpers/git-fixtures.js';
 import { SilentLogger } from '../../helpers/silent-logger.js';
@@ -455,7 +456,7 @@ describe('Bug 2 & 3 — full pipeline regressions', () => {
       reports,
       logger,
     );
-    return { store, reports, sessions };
+    return { store, reports, sessions, explanation };
   }
 
   /**
@@ -512,7 +513,7 @@ describe('Bug 2 & 3 — full pipeline regressions', () => {
 
   it('review_project narrative and analyze_architecture detected agree on the primary pattern', async () => {
     const project = await createLayeredAndFeatureFirstApp();
-    const { store, reports, sessions } = buildStack(path.join(tempDir!, 'k.sqlite'));
+    const { store, reports, sessions, explanation } = buildStack(path.join(tempDir!, 'k.sqlite'));
 
     const report = await reports.build(project);
     // Sanity: this fixture really does trigger the disagreement condition —
@@ -535,7 +536,11 @@ describe('Bug 2 & 3 — full pipeline regressions', () => {
     const detectedFinding = report.findings.find((f) => f.code === 'DetectedArchitecture')!;
     expect(detectedFinding.title).toContain('feature_first');
 
-    const review = await new ReviewProjectHandler(sessions, new SilentLogger()).execute({
+    const review = await new ReviewProjectHandler(
+      sessions,
+      new SilentLogger(),
+      new ExplainFindingHandler(sessions, explanation),
+    ).execute({
       path: project,
     });
     expect(review.success).toBe(true);
@@ -602,14 +607,18 @@ describe('Bug 2 & 3 — full pipeline regressions', () => {
 
   it('GodClassCandidate topRisk/topAction gets non-empty sampleFiles from real evidence', async () => {
     const project = await createGodClassApp();
-    const { store, reports, sessions } = buildStack(path.join(tempDir!, 'k.sqlite'));
+    const { store, reports, sessions, explanation } = buildStack(path.join(tempDir!, 'k.sqlite'));
 
     const report = await reports.build(project);
     const godClass = report.findings.find((f) => f.code === 'GodClassCandidate');
     expect(godClass, 'fixture must actually trigger GodClassCandidate').toBeDefined();
     expect(godClass!.evidenceItems?.some((i) => i.file === 'lib/core/big_service.dart')).toBe(true);
 
-    const review = await new ReviewProjectHandler(sessions, new SilentLogger()).execute({
+    const review = await new ReviewProjectHandler(
+      sessions,
+      new SilentLogger(),
+      new ExplainFindingHandler(sessions, explanation),
+    ).execute({
       path: project,
     });
     expect(review.success).toBe(true);

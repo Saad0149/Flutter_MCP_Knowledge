@@ -182,9 +182,13 @@ export class ExplainFindingHandler {
     }
   }
 
-  /** Builds one finding's shaped response, or a not_found marker — used by
-   * both the single-code path and the codes[] batch path. */
-  private buildOne(
+  /**
+   * Builds one finding's shaped response, or a not_found marker — used by
+   * both the single-code path and the codes[] batch path, and reused
+   * directly by review_project's explainTopFindings param (which passes an
+   * already-resolved session so this never rescans or re-resolves).
+   */
+  buildOne(
     session: StoredAnalysisSession,
     findingCode: string,
     findingId: string | undefined,

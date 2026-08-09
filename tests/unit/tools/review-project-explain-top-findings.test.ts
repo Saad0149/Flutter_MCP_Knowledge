@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AstAdapter } from '../../../src/analysis/ast/ast-adapter.js';
 import { TechnicalDebtEngine } from '../../../src/analysis/debt/technical-debt-engine.js';
 import { AccessibilityAnalyzer } from '../../../src/analysis/engines/accessibility-analyzer.js';
@@ -17,7 +17,7 @@ import { EvidenceEngine } from '../../../src/analysis/evidence/evidence-engine.j
 import { ExplanationEngine } from '../../../src/analysis/insight/explanation-engine.js';
 import { PriorityActionEngine } from '../../../src/analysis/insight/priority-action-engine.js';
 import { ProjectHealthScorer } from '../../../src/analysis/insight/project-health-scorer.js';
-import { deriveFindingPriority, ProjectReportBuilder } from '../../../src/analysis/insight/project-report-builder.js';
+import { ProjectReportBuilder } from '../../../src/analysis/insight/project-report-builder.js';
 import { RecommendationEngine } from '../../../src/analysis/insight/recommendation-engine.js';
 import { KnowledgeEngine } from '../../../src/analysis/knowledge/knowledge-engine.js';
 import { MetricsEngine } from '../../../src/analysis/metrics/metrics-engine.js';
@@ -25,15 +25,13 @@ import { OfficialReferenceResolver } from '../../../src/analysis/official-refs.j
 import { ProjectScanner } from '../../../src/analysis/project-scanner.js';
 import { FindingRelationshipEngine } from '../../../src/analysis/relationships/finding-relationship-engine.js';
 import { RuleEngine } from '../../../src/analysis/rules/rule-engine.js';
+import { AnalysisSessionStore } from '../../../src/analysis/session/analysis-session-store.js';
 import { ScoringEngine } from '../../../src/analysis/scoring/scoring-engine.js';
-import type { AnalysisFinding } from '../../../src/analysis/types.js';
 import type { DartAnalyzerClient } from '../../../src/parser/dart-analyzer-client.js';
 import { HeuristicSymbolExtractor } from '../../../src/parser/heuristic-extractor.js';
 import { createSqliteKnowledgeStore } from '../../../src/store/sqlite-store.js';
-import { AnalysisSessionStore } from '../../../src/analysis/session/analysis-session-store.js';
 import { ExplainFindingHandler } from '../../../src/tools/explain-finding.js';
 import { ReviewProjectHandler } from '../../../src/tools/review-project.js';
-import { sampleFilesFor } from '../../../src/tools/tool-response-helpers.js';
 import { createTempDir, removeTempDir } from '../../helpers/git-fixtures.js';
 import { SilentLogger } from '../../helpers/silent-logger.js';
 
@@ -46,73 +44,19 @@ function unavailableDartClient(): DartAnalyzerClient {
   } as unknown as DartAnalyzerClient;
 }
 
-function baseFinding(
-  overrides: Partial<AnalysisFinding> &
-    Pick<AnalysisFinding, 'code' | 'category' | 'severity' | 'scoreImpact' | 'confidence'>,
-): AnalysisFinding {
-  return {
-    title: overrides.code,
-    description: overrides.code,
-    evidence: [],
-    recommendedFix: null,
-    source: 'heuristic',
-    basis: 'pattern',
-    ...overrides,
-  };
-}
+const ALL_9_ANALYZERS = [
+  'architecture',
+  'codeQuality',
+  'stateManagement',
+  'complexity',
+  'testing',
+  'dependency',
+  'performance',
+  'documentation',
+  'accessibility',
+];
 
-describe('deriveFindingPriority — critical requires locatable evidence (unit-level)', () => {
-  it('downgrades an otherwise-critical finding to high when it has no locatable file evidence', () => {
-    const f = baseFinding({
-      code: 'SyntheticAggregate',
-      category: 'other',
-      severity: 'negative',
-      scoreImpact: -20,
-      confidence: 0.95,
-      evidence: ['count=999'],
-    });
-    expect(deriveFindingPriority(f)).toBe('high');
-  });
-
-  it('keeps critical when the same impact/confidence finding has locatable evidence', () => {
-    const f = baseFinding({
-      code: 'SyntheticLocatable',
-      category: 'other',
-      severity: 'negative',
-      scoreImpact: -20,
-      confidence: 0.95,
-      evidence: ['lib/foo.dart'],
-      evidenceItems: [
-        {
-          file: 'lib/foo.dart',
-          line: null,
-          column: null,
-          symbol: null,
-          astNode: null,
-          analyzer: 'test',
-          confidence: 0.95,
-          source: 'heuristic',
-          detail: 'lib/foo.dart',
-        },
-      ],
-    });
-    expect(deriveFindingPriority(f)).toBe('critical');
-  });
-
-  it('keeps critical when finding.file itself is set (no evidenceItems needed)', () => {
-    const f = baseFinding({
-      code: 'SyntheticFileField',
-      category: 'other',
-      severity: 'negative',
-      scoreImpact: -20,
-      confidence: 0.95,
-      file: 'lib/bar.dart',
-    });
-    expect(deriveFindingPriority(f)).toBe('critical');
-  });
-});
-
-describe('evidence coverage — sampleFiles generalized beyond GodClassCandidate', () => {
+describe('review_project explainTopFindings', () => {
   let tempDir: string | undefined;
 
   afterEach(async () => {
@@ -177,21 +121,22 @@ describe('evidence coverage — sampleFiles generalized beyond GodClassCandidate
       reports,
       logger,
     );
-    return { store, reports, sessions, explanation };
+    const explainFinding = new ExplainFindingHandler(sessions, explanation);
+    const reviewProject = new ReviewProjectHandler(sessions, logger, explainFinding);
+    return { store, reports, sessions, explainFinding, reviewProject, scanner };
   }
 
   /**
-   * Deliberately dense across analyzers, mirroring the real NLDCMobileApp
-   * review that surfaced this bug: a god class, a large build method, an
-   * undocumented widget, a Presentation->Data layer violation (triggers both
-   * ArchitectureAnalyzer's PresentationImportsData and DependencyAnalyzer's
-   * LayerViolations from the same import), a Domain->Data violation, a
-   * circular import, a setState-heavy file, and a huge (>=600 LOC) widget —
-   * plus no tests and no Semantics usage anywhere, to exercise the
-   * genuinely-evidence-less findings too.
+   * Dense fixture with at least one negative/warning finding in ALL 9
+   * analyzer categories, several with real file evidence (GodClassCandidate,
+   * LargeBuildMethod, PresentationImportsData, LayerViolations,
+   * DomainImportsData) and several confirmed evidence-less by the earlier
+   * hasLocatableEvidence work (HeavySetState, HugeWidgets, NoSemanticsWidgets,
+   * NoTestSuite) — so the response exercises both the "real evidence" and
+   * "honestly empty" cases for point 4.
    */
-  async function createEvidenceCoverageApp(): Promise<string> {
-    tempDir = await createTempDir('evidence-coverage-');
+  async function createFixtureApp(): Promise<string> {
+    tempDir = await createTempDir('explain-top-findings-');
     const project = path.join(tempDir, 'app');
     await mkdir(path.join(project, 'lib', 'core'), { recursive: true });
     await mkdir(path.join(project, 'lib', 'features', 'home', 'presentation'), { recursive: true });
@@ -201,11 +146,11 @@ describe('evidence coverage — sampleFiles generalized beyond GodClassCandidate
 
     await writeFile(
       path.join(project, 'pubspec.yaml'),
-      `name: evidence_app\nversion: 1.0.0\nenvironment:\n  sdk: ">=3.0.0 <4.0.0"\ndependencies:\n  flutter:\n    sdk: flutter\n`,
+      `name: explain_top_app\nversion: 1.0.0\nenvironment:\n  sdk: ">=3.0.0 <4.0.0"\ndependencies:\n  flutter:\n    sdk: flutter\n`,
       'utf8',
     );
 
-    // Circular import.
+    // Circular import (dependency).
     await writeFile(
       path.join(project, 'lib', 'core', 'circular_a.dart'),
       "import './circular_b.dart';\n\nclass CircularA { CircularB? b; }\n",
@@ -217,10 +162,10 @@ describe('evidence coverage — sampleFiles generalized beyond GodClassCandidate
       'utf8',
     );
 
-    // God class: >=400 LOC, 25 methods, 20 fields, 20 imports (score >= 70).
+    // God class (codeQuality): >=400 LOC, 25 methods, 20 fields, 20 imports.
     const methodLines = Array.from({ length: 25 }, (_, i) => `  void method${i}() {}`).join('\n');
     const fieldLines = Array.from({ length: 20 }, (_, i) => `  final int field${i} = ${i};`).join('\n');
-    const padLines = Array.from({ length: 350 }, () => '  // pad').join('\n');
+    const padLines = Array.from({ length: 350 }, () => '  ;').join('\n');
     const bigImports = [
       'package:flutter/material.dart', 'package:flutter/widgets.dart', 'dart:async', 'dart:convert',
       'dart:io', 'dart:math', 'dart:collection', 'dart:typed_data', 'dart:isolate', 'dart:ffi',
@@ -235,8 +180,9 @@ describe('evidence coverage — sampleFiles generalized beyond GodClassCandidate
       'utf8',
     );
 
-    // Large build method + Presentation -> Data import (PresentationImportsData
-    // + LayerViolations, from the same import edge) + undocumented widget.
+    // Large build method + Presentation->Data import (architecture + dependency)
+    // + undocumented widget (documentation) + print()/legacy-button-free but
+    // large enough build.
     const textLines = Array.from({ length: 90 }, (_, i) => `      Text('line ${i}'),`).join('\n');
     await writeFile(
       path.join(project, 'lib', 'features', 'home', 'presentation', 'home_page.dart'),
@@ -248,19 +194,13 @@ describe('evidence coverage — sampleFiles generalized beyond GodClassCandidate
       'class HomeRepository { Future<void> load() async {} }\n',
       'utf8',
     );
-
-    // Domain -> Data import.
     await writeFile(
       path.join(project, 'lib', 'features', 'home', 'domain', 'home_usecase.dart'),
       "import '../data/home_repository.dart';\n\nclass HomeUsecase { final repo = HomeRepository(); }\n",
       'utf8',
     );
 
-    // Heavy/problematic setState: 41 setState() calls in a file that also
-    // touches http — isProblematicSetStateContext() flags the whole file, so
-    // all 41 count toward problematicSetStateSites. scoreImpact is
-    // -(4 + floor(n/10)) capped at 12, so 41 sites crosses the high-impact
-    // (>=8) threshold, not just the >10 finding-emission threshold.
+    // Heavy/problematic setState (stateManagement) — evidence-less by design.
     const setStateCalls = Array.from({ length: 41 }, () => '    setState(() {});').join('\n');
     await writeFile(
       path.join(project, 'lib', 'features', 'home', 'presentation', 'heavy_state.dart'),
@@ -268,7 +208,7 @@ describe('evidence coverage — sampleFiles generalized beyond GodClassCandidate
       'utf8',
     );
 
-    // Huge widget: file >= 600 LOC, undocumented.
+    // Huge widget (complexity) — evidence-less by design.
     const hugePad = Array.from({ length: 615 }, () => '// pad').join('\n');
     await writeFile(
       path.join(project, 'lib', 'widgets', 'huge_widget.dart'),
@@ -276,96 +216,148 @@ describe('evidence coverage — sampleFiles generalized beyond GodClassCandidate
       'utf8',
     );
 
-    // Deliberately: no test/ directory, no Semantics/Tooltip usage anywhere.
+    // Deliberately: no test/ directory (testing: NoTestSuite, evidence-less),
+    // no Semantics/Tooltip usage (accessibility: NoSemanticsWidgets, evidence-less),
+    // no analysis_options.yaml (documentation).
     return project;
   }
 
-  it('populates real sampleFiles for every finding whose evidence names a real file', async () => {
-    const project = await createEvidenceCoverageApp();
-    const { store, reports } = buildStack(path.join(tempDir!, 'k.sqlite'));
-    const report = await reports.build(project);
+  it('default output (explainTopFindings omitted) has no topFindingsByAnalyzer field at all', async () => {
+    const project = await createFixtureApp();
+    const { store, reviewProject } = buildStack(path.join(tempDir!, 'k.sqlite'));
 
-    const byCode = new Map(report.findings.map((f) => [f.code, f]));
+    const result = await reviewProject.execute({ path: project });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect('topFindingsByAnalyzer' in result.data).toBe(false);
+    }
+    store.close();
+  });
 
-    // Confirmed working before this change (GodClassCandidate was Bug 3's
-    // fix; the other three already matched the generic parser's shapes).
-    const previouslyWorking = ['GodClassCandidate', 'LargeBuildMethod', 'UndocumentedWidgets'];
-    // Fixed by this change: general arrow-chain parsing in evidence-engine.ts.
-    const newlyFixed = ['LayerViolations', 'CircularDependencies'];
-    // Already worked via existing evidence-engine.ts special cases.
-    const alreadySpecialCased = ['PresentationImportsData', 'DomainImportsData'];
+  it('explainTopFindings:false produces the exact same field set as omitting it', async () => {
+    const project = await createFixtureApp();
+    const { store, reviewProject } = buildStack(path.join(tempDir!, 'k.sqlite'));
 
-    for (const code of [...previouslyWorking, ...newlyFixed, ...alreadySpecialCased]) {
-      const f = byCode.get(code);
-      expect(f, `fixture must trigger ${code}`).toBeDefined();
-      const files = sampleFilesFor(f);
-      expect(files.length, `${code} should have real sampleFiles`).toBeGreaterThan(0);
-      // Every sample path must be a real project-relative .dart file — not a
-      // whole evidence sentence (regression guard for the CircularDependencies
-      // "cycle.split(' -> ')" bug where the wrong separator meant the entire
-      // cycle description string was stored as if it were a single file).
-      for (const file of files) {
-        expect(file.endsWith('.dart')).toBe(true);
-        expect(file).not.toContain(' → ');
-        expect(file).not.toContain(' (');
-      }
+    const omitted = await reviewProject.execute({ path: project });
+    const explicit = await reviewProject.execute({ path: project, explainTopFindings: false });
+    expect(omitted.success && explicit.success).toBe(true);
+    if (omitted.success && explicit.success) {
+      // Each call is a fresh rescan (forceRefresh:true), so array-ordering
+      // details (e.g. sampleFiles from filesystem read order) can legitimately
+      // differ between the two independent scans — the actual regression
+      // surface for "byte-for-byte unchanged by default" is the field set,
+      // not incidental ordering from an unrelated rescan.
+      expect(Object.keys(explicit.data).sort()).toEqual(Object.keys(omitted.data).sort());
+      expect('topFindingsByAnalyzer' in explicit.data).toBe(false);
+      expect('topFindingsByAnalyzer' in omitted.data).toBe(false);
+    }
+    store.close();
+  });
+
+  it('explainTopFindings:true attaches exactly 9 entries, one per analyzer, in brief-mode shape', async () => {
+    const project = await createFixtureApp();
+    const { store, reviewProject } = buildStack(path.join(tempDir!, 'k.sqlite'));
+
+    const result = await reviewProject.execute({ path: project, explainTopFindings: true });
+    expect(result.success).toBe(true);
+    if (!result.success || !('topFindingsByAnalyzer' in result.data)) {
+      store.close();
+      throw new Error('expected topFindingsByAnalyzer on the summary response');
     }
 
-    // CircularDependencies must specifically resolve to real per-file paths
-    // pulled from the cycle chain, not the whole chain string.
-    const circular = byCode.get('CircularDependencies')!;
-    for (const file of sampleFilesFor(circular)) {
-      expect(project).toBeDefined(); // fixture built successfully
-      expect(file).toMatch(/^lib\/core\/circular_[ab]\.dart$/);
+    const entries = result.data.topFindingsByAnalyzer;
+    expect(entries.length).toBe(9);
+    expect(entries.map((e) => e.analyzer).sort()).toEqual([...ALL_9_ANALYZERS].sort());
+
+    const withExplanation = entries.filter((e) => e.topFindingExplained !== undefined);
+    // This fixture triggers a negative/warning finding in every one of the 9
+    // categories, so every entry should have something explained.
+    expect(withExplanation.length).toBe(9);
+
+    for (const entry of withExplanation) {
+      const explained = entry.topFindingExplained!;
+      // Brief-mode shape: summary + fix + priority + confidence present;
+      // narrative/official-reference fields brief mode already excludes.
+      expect(explained.summary).toBeTruthy();
+      expect(explained.fix).toBeDefined();
+      expect(explained.priority).toBeDefined();
+      expect(explained.confidence).toBeGreaterThan(0);
+      expect('officialReferences' in explained).toBe(false);
+      expect('officialGuidance' in explained).toBe(false);
+      expect('whyThisMatters' in explained).toBe(false);
+      expect('technicalExplanation' in explained).toBe(false);
+      expect('relatedFindings' in explained).toBe(false);
+      expect('relatedFlutterWidgets' in explained).toBe(false);
+      expect('relatedApis' in explained).toBe(false);
+      // maxEvidence:3 was requested for this reuse path.
+      if (explained.evidence) {
+        expect(explained.evidence.length).toBeLessThanOrEqual(3);
+      }
     }
 
     store.close();
   });
 
-  it('flags genuinely evidence-less high-impact findings instead of faking sampleFiles', async () => {
-    const project = await createEvidenceCoverageApp();
-    const { store, reports } = buildStack(path.join(tempDir!, 'k.sqlite'));
-    const report = await reports.build(project);
-    const byCode = new Map(report.findings.map((f) => [f.code, f]));
+  it('does not rescan or re-run analyzers: scanner.scan is called exactly once, and a follow-up explain_finding on the same session is a cache hit', async () => {
+    const project = await createFixtureApp();
+    const { store, reviewProject, explainFinding, scanner } = buildStack(
+      path.join(tempDir!, 'k.sqlite'),
+    );
+    const scanSpy = vi.spyOn(scanner, 'scan');
 
-    // These findings, as currently computed by their analyzers, only ever
-    // produce aggregate counts — no per-instance file is tracked anywhere in
-    // the pipeline. They must not silently claim 'critical' and must not
-    // have fabricated sampleFiles.
-    const evidenceLessHighImpact = ['HeavySetState', 'HugeWidgets', 'NoSemanticsWidgets', 'NoTestSuite'];
-    for (const code of evidenceLessHighImpact) {
-      const f = byCode.get(code);
-      expect(f, `fixture must trigger ${code}`).toBeDefined();
-      const impact = Math.abs(f!.scoreImpact ?? 0);
-      expect(impact, `${code} must actually be high/critical-impact for this test to mean anything`).toBeGreaterThanOrEqual(8);
-      expect(sampleFilesFor(f)).toEqual([]);
-      expect(f!.priority).not.toBe('critical');
+    const result = await reviewProject.execute({ path: project, explainTopFindings: true });
+    expect(result.success).toBe(true);
+    expect(scanSpy).toHaveBeenCalledTimes(1);
+
+    if (result.success && 'sessionId' in result.data) {
+      const follow = await explainFinding.execute({
+        sessionId: result.data.sessionId,
+        findingCode: 'GodClassCandidate',
+      });
+      expect(follow.success).toBe(true);
+      if (follow.success && 'fromCache' in follow.data) {
+        expect(follow.data.fromCache).toBe(true);
+      }
     }
+    // Still exactly one scan after the follow-up sessionId-based call.
+    expect(scanSpy).toHaveBeenCalledTimes(1);
 
     store.close();
   });
 
-  it('review_project topRisks/topActions surface hasLocatableEvidence alongside sampleFiles', async () => {
-    const project = await createEvidenceCoverageApp();
-    const { store, sessions, explanation } = buildStack(path.join(tempDir!, 'k.sqlite'));
-    const review = await new ReviewProjectHandler(
-      sessions,
-      new SilentLogger(),
-      new ExplainFindingHandler(sessions, explanation),
-    ).execute({ path: project });
-    expect(review.success).toBe(true);
-    if (review.success && 'topRisks' in review.data) {
-      const layerRisk = review.data.topRisks.find((r) => r.title.includes('layer violation'));
-      expect(layerRisk, 'LayerViolations must appear in topRisks').toBeDefined();
-      expect(layerRisk!.hasLocatableEvidence).toBe(true);
-      expect(layerRisk!.sampleFiles.length).toBeGreaterThan(0);
+  it('an analyzer whose top finding has no locatable evidence is handled honestly, not suppressed or faked', async () => {
+    const project = await createFixtureApp();
+    const { store, reviewProject } = buildStack(path.join(tempDir!, 'k.sqlite'));
 
-      const noSemanticsRisk = review.data.topRisks.find((r) => r.title.includes('Semantics'));
-      if (noSemanticsRisk) {
-        expect(noSemanticsRisk.hasLocatableEvidence).toBe(false);
-        expect(noSemanticsRisk.sampleFiles).toEqual([]);
-      }
+    const result = await reviewProject.execute({ path: project, explainTopFindings: true });
+    expect(result.success).toBe(true);
+    if (!result.success || !('topFindingsByAnalyzer' in result.data)) {
+      store.close();
+      throw new Error('expected topFindingsByAnalyzer on the summary response');
     }
+
+    const stateManagementEntry = result.data.topFindingsByAnalyzer.find(
+      (e) => e.analyzer === 'stateManagement',
+    );
+    expect(stateManagementEntry, 'stateManagement entry must be present').toBeDefined();
+    // Both HeavySetState and LogicInWidgets are confirmed evidence-less state-
+    // management findings (pure aggregate counts, no per-instance location) —
+    // this fixture's negative-severity LogicInWidgets outranks the warning-
+    // severity HeavySetState in the same ranking review_project's own
+    // topRisks uses, so either is a valid "no locatable evidence" example.
+    expect(['HeavySetState', 'LogicInWidgets']).toContain(stateManagementEntry!.topFindingCode);
+    expect(stateManagementEntry!.hasLocatableEvidence).toBe(false);
+    // Honest, not suppressed: summary/fix are still there.
+    expect(stateManagementEntry!.topFindingExplained).toBeDefined();
+    expect(stateManagementEntry!.topFindingExplained!.summary).toBeTruthy();
+    expect(stateManagementEntry!.topFindingExplained!.fix).toBeDefined();
+    // Not faked: whatever evidence items exist genuinely name no file — this
+    // is the same "evidence exists but isn't file-shaped" case hasEvidence
+    // vs. hasLocatableEvidence distinguishes; no path is fabricated to fill
+    // the gap.
+    const evidenceItems = stateManagementEntry!.topFindingExplained!.evidence ?? [];
+    expect(evidenceItems.every((item) => item.file === null)).toBe(true);
+
     store.close();
   });
 });

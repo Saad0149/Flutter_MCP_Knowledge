@@ -311,8 +311,12 @@ ${textLines}
 
   it('review_project returns slim executive summary + sessionId by default', async () => {
     const project = await createFixtureApp();
-    const { store, sessions } = buildStack(path.join(tempDir!, 'k.sqlite'));
-    const review = await new ReviewProjectHandler(sessions, new SilentLogger()).execute({
+    const { store, sessions, explanation } = buildStack(path.join(tempDir!, 'k.sqlite'));
+    const review = await new ReviewProjectHandler(
+      sessions,
+      new SilentLogger(),
+      new ExplainFindingHandler(sessions, explanation),
+    ).execute({
       path: project,
     });
     expect(review.success).toBe(true);
@@ -333,8 +337,12 @@ ${textLines}
 
   it('review_project detail=full still returns legacy payload with sessionId', async () => {
     const project = await createFixtureApp();
-    const { store, sessions } = buildStack(path.join(tempDir!, 'k.sqlite'));
-    const review = await new ReviewProjectHandler(sessions, new SilentLogger()).execute({
+    const { store, sessions, explanation } = buildStack(path.join(tempDir!, 'k.sqlite'));
+    const review = await new ReviewProjectHandler(
+      sessions,
+      new SilentLogger(),
+      new ExplainFindingHandler(sessions, explanation),
+    ).execute({
       path: project,
       detail: 'full',
     });
@@ -356,7 +364,11 @@ ${textLines}
     const { store, sessions, explanation, recommendations } = buildStack(
       path.join(tempDir!, 'k.sqlite'),
     );
-    const review = await new ReviewProjectHandler(sessions, new SilentLogger()).execute({
+    const review = await new ReviewProjectHandler(
+      sessions,
+      new SilentLogger(),
+      new ExplainFindingHandler(sessions, explanation),
+    ).execute({
       path: project,
     });
     expect(review.success).toBe(true);
@@ -740,8 +752,12 @@ ${textLines}
 
   it('fail-fast: review_project on a project with zero Dart files returns a blocked status, not a hollow report', async () => {
     const project = await createEmptyFixtureApp();
-    const { store, sessions } = buildStack(path.join(tempDir!, 'k.sqlite'));
-    const result = await new ReviewProjectHandler(sessions, new SilentLogger()).execute({ path: project });
+    const { store, sessions, explanation } = buildStack(path.join(tempDir!, 'k.sqlite'));
+    const result = await new ReviewProjectHandler(
+      sessions,
+      new SilentLogger(),
+      new ExplainFindingHandler(sessions, explanation),
+    ).execute({ path: project });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data).toMatchObject({ status: 'blocked', reason: 'no_dart_files' });
@@ -776,7 +792,7 @@ ${textLines}
 
   it('review_project topRisks/topActions include sampleFiles pulled from real finding evidence, never fabricated', async () => {
     const project = await createFixtureApp();
-    const { store, sessions, reports } = buildStack(path.join(tempDir!, 'k.sqlite'));
+    const { store, sessions, reports, explanation } = buildStack(path.join(tempDir!, 'k.sqlite'));
     const report = await reports.build(project);
 
     const allRealEvidenceFiles = new Set<string>();
@@ -787,7 +803,11 @@ ${textLines}
       }
     }
 
-    const result = await new ReviewProjectHandler(sessions, new SilentLogger()).execute({ path: project });
+    const result = await new ReviewProjectHandler(
+      sessions,
+      new SilentLogger(),
+      new ExplainFindingHandler(sessions, explanation),
+    ).execute({ path: project });
     expect(result.success).toBe(true);
     if (result.success && 'topRisks' in result.data) {
       const risksWithFiles = result.data.topRisks.filter((r) => r.sampleFiles.length > 0);
@@ -1209,8 +1229,12 @@ ${textLines}
 
   it('analyze_complexity returns cache hit with detected summary and facts', async () => {
     const project = await createFixtureApp();
-    const { store, sessions } = buildStack(path.join(tempDir!, 'k.sqlite'));
-    const review = await new ReviewProjectHandler(sessions, new SilentLogger()).execute({
+    const { store, sessions, explanation } = buildStack(path.join(tempDir!, 'k.sqlite'));
+    const review = await new ReviewProjectHandler(
+      sessions,
+      new SilentLogger(),
+      new ExplainFindingHandler(sessions, explanation),
+    ).execute({
       path: project,
     });
     expect(review.success).toBe(true);
@@ -1230,8 +1254,12 @@ ${textLines}
 
   it('analyze_documentation returns cache hit with doc ratios', async () => {
     const project = await createFixtureApp();
-    const { store, sessions } = buildStack(path.join(tempDir!, 'k.sqlite'));
-    const review = await new ReviewProjectHandler(sessions, new SilentLogger()).execute({
+    const { store, sessions, explanation } = buildStack(path.join(tempDir!, 'k.sqlite'));
+    const review = await new ReviewProjectHandler(
+      sessions,
+      new SilentLogger(),
+      new ExplainFindingHandler(sessions, explanation),
+    ).execute({
       path: project,
     });
     expect(review.success).toBe(true);
@@ -1250,8 +1278,12 @@ ${textLines}
 
   it('analyze_testing returns cache hit with test counts', async () => {
     const project = await createFixtureApp();
-    const { store, sessions } = buildStack(path.join(tempDir!, 'k.sqlite'));
-    const review = await new ReviewProjectHandler(sessions, new SilentLogger()).execute({
+    const { store, sessions, explanation } = buildStack(path.join(tempDir!, 'k.sqlite'));
+    const review = await new ReviewProjectHandler(
+      sessions,
+      new SilentLogger(),
+      new ExplainFindingHandler(sessions, explanation),
+    ).execute({
       path: project,
     });
     expect(review.success).toBe(true);
@@ -1270,8 +1302,12 @@ ${textLines}
 
   it('analyze_dependencies returns cache hit with layer violation count', async () => {
     const project = await createFixtureApp();
-    const { store, sessions } = buildStack(path.join(tempDir!, 'k.sqlite'));
-    const review = await new ReviewProjectHandler(sessions, new SilentLogger()).execute({
+    const { store, sessions, explanation } = buildStack(path.join(tempDir!, 'k.sqlite'));
+    const review = await new ReviewProjectHandler(
+      sessions,
+      new SilentLogger(),
+      new ExplainFindingHandler(sessions, explanation),
+    ).execute({
       path: project,
     });
     expect(review.success).toBe(true);
@@ -1290,8 +1326,12 @@ ${textLines}
 
   it('analyze_performance returns cache hit with build method count', async () => {
     const project = await createFixtureApp();
-    const { store, sessions } = buildStack(path.join(tempDir!, 'k.sqlite'));
-    const review = await new ReviewProjectHandler(sessions, new SilentLogger()).execute({
+    const { store, sessions, explanation } = buildStack(path.join(tempDir!, 'k.sqlite'));
+    const review = await new ReviewProjectHandler(
+      sessions,
+      new SilentLogger(),
+      new ExplainFindingHandler(sessions, explanation),
+    ).execute({
       path: project,
     });
     expect(review.success).toBe(true);
@@ -1310,8 +1350,12 @@ ${textLines}
 
   it('analyze_accessibility returns cache hit with semantics counts', async () => {
     const project = await createFixtureApp();
-    const { store, sessions } = buildStack(path.join(tempDir!, 'k.sqlite'));
-    const review = await new ReviewProjectHandler(sessions, new SilentLogger()).execute({
+    const { store, sessions, explanation } = buildStack(path.join(tempDir!, 'k.sqlite'));
+    const review = await new ReviewProjectHandler(
+      sessions,
+      new SilentLogger(),
+      new ExplainFindingHandler(sessions, explanation),
+    ).execute({
       path: project,
     });
     expect(review.success).toBe(true);

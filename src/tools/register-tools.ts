@@ -308,6 +308,11 @@ export function registerTools(server: McpServer, container: DependencyContainer)
       '(up to 3 real file paths from that finding\'s evidence) so you can often decide whether to ' +
       'investigate further without a round-trip to explore_finding. If the project has no Dart files, ' +
       'returns a short { status: "blocked", reason: "no_dart_files", suggestedAction } instead of a hollow report. ' +
+      'Pass explainTopFindings=true when the caller wants an actionable report in one call rather than ' +
+      'needing a full 9-analyzer sweep: it attaches a brief explain_finding-style explanation (summary + ' +
+      'fix + top evidence) to each of the 9 analyzers\' single top finding under topFindingsByAnalyzer — ' +
+      'score + top finding + fix + evidence for all 9 categories in one call, still reading only the ' +
+      'already-cached scan. Default false; omitting it leaves the response identical to today. ' +
       'Response includes bytes/approxTokens.' +
       BASIS_NOTE +
       UNTRUSTED_CONTENT_NOTE,
@@ -315,6 +320,7 @@ export function registerTools(server: McpServer, container: DependencyContainer)
       path: ReviewProjectInputSchema.shape.path,
       limit: ReviewProjectInputSchema.shape.limit,
       detail: ReviewProjectInputSchema.shape.detail,
+      explainTopFindings: ReviewProjectInputSchema.shape.explainTopFindings,
     },
     async (args) => toMcpContent(await reviewProject.execute(args)),
   );

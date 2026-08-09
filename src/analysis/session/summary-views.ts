@@ -136,7 +136,7 @@ export function toScoreCard(s: HealthScore): ScoreCard {
   };
 }
 
-function severityRank(severity: AnalysisFinding['severity']): number {
+export function severityRank(severity: AnalysisFinding['severity']): number {
   switch (severity) {
     case 'negative':
       return 4;
