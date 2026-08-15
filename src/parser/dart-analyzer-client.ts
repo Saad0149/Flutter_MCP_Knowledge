@@ -75,9 +75,23 @@ export interface AnalyzerSymbol {
   readonly implementsClause: string | null;
 }
 
+/** Mirrors the `metrics` object emitted by parser/bin/extract_symbols.dart's `_SymbolVisitor`. */
+export interface AnalyzerFileMetrics {
+  readonly branchCount: number;
+  readonly maxNestingDepth: number;
+  readonly buildMethods: readonly {
+    readonly line: number;
+    readonly startLine: number;
+    readonly endLine: number;
+    readonly approxLines: number;
+  }[];
+  readonly listViewEagerCalls: readonly { readonly line: number }[];
+}
+
 export interface AnalyzerFileResult {
   readonly path: string;
   readonly symbols: readonly AnalyzerSymbol[];
+  readonly metrics?: AnalyzerFileMetrics;
 }
 
 export interface AnalyzerRunResult {

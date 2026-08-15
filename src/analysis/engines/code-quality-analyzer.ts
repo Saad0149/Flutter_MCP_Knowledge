@@ -80,9 +80,22 @@ export class CodeQualityAnalyzer implements ProjectAnalysisEngine<CodeQualityFac
       (g) => `${g.name} (${g.file}) score=${g.score} conf=${Math.round(g.confidence * 100)}%`,
     );
 
+    const classExtendsByName = new Map<string, string | null>();
+    for (const c of classes) {
+      // First-wins on duplicate class names across files — a real, narrow
+      // precision limitation (see DeepInheritance confidence rationale
+      // below) since this table isn't scoped per-file.
+      if (!classExtendsByName.has(c.name)) {
+        classExtendsByName.set(c.name, c.extendsClause);
+      }
+    }
+    const depthCache = new Map<string, number>();
     const deepInheritance = classes
-      .filter((c) => inheritanceDepthHint(c.extendsClause) >= 3)
-      .map((c) => `${c.name} extends ${c.extendsClause}`);
+      .filter((c) => inheritanceDepth(c.name, classExtendsByName, depthCache) >= 3)
+      .map(
+        (c) =>
+          `${c.name} extends ${c.extendsClause} (depth ${inheritanceDepth(c.name, classExtendsByName, depthCache)})`,
+      );
 
     const largeBuildMethods: { file: string; line: number; approxLines: number }[] = [];
     let printCallSites = 0;
@@ -250,12 +263,22 @@ export class CodeQualityAnalyzer implements ProjectAnalysisEngine<CodeQualityFac
             recommendedFix:
               'Split by responsibility (UI sections, state owners, IO). Prefer feature-local widgets/services.',
             source: 'heuristic',
-            dependsOnAst: true,
             confidence: Math.min(
               0.95,
               godClassDetails.reduce((s, g) => s + g.confidence, 0) / godClassDetails.length,
             ),
-            basis: astOrFallback(ast),
+            // Class *discovery* (which classes qualify, at what LOC) reads the
+            // real symbol table when available, but scoreGodClass()'s actual
+            // signals — method/field/import counts, responsibility hints —
+            // are always regex over raw file content, regardless of AST
+            // availability. The score is what this finding is *about*, so
+            // basis tracks that (an inherently regex check by design, per
+            // FindingBasis's own definition of 'pattern'), not the discovery
+            // step. dependsOnAst is correspondingly omitted: unlike
+            // LargeClassCandidate (which owns the discovery-only finding),
+            // this finding's confidence shouldn't be scaled by astMeta
+            // degradation it doesn't actually depend on.
+            basis: 'pattern',
             scoreImpact: -Math.min(15, 6 + Math.floor(godClassDetails.length / 5)),
             whyItMatters:
               'Types that mix many methods, fields, and dependencies concentrate change risk.',
@@ -278,7 +301,16 @@ export class CodeQualityAnalyzer implements ProjectAnalysisEngine<CodeQualityFac
             recommendedFix: 'Flatten hierarchies; use mixins/composition for shared behavior.',
             officialReference: this.refs.lookupDoc('composition'),
             dependsOnAst: true,
-            confidence: 0.7,
+            // Real recursive walk of each class's own extendsClause through
+            // the project's local symbol table now (previously: whitespace-
+            // token count of a single extends clause string, not a depth
+            // measure at all). Not 0.95+: base-class name matching is by
+            // unqualified name only (no import resolution), so two unrelated
+            // classes sharing a name in different files could misattribute
+            // an ancestor. Diamond inheritance isn't a caveat here — Dart's
+            // `extends` is single-inheritance by construction, so no chain
+            // this walks can actually branch.
+            confidence: 0.82,
             basis: astOrFallback(ast),
             scoreImpact: -6,
           },
@@ -500,10 +532,64 @@ function scoreGodClass(
   };
 }
 
-function inheritanceDepthHint(extendsClause: string | null): number {
-  if (!extendsClause) return 0;
-  const parts = extendsClause.split(/\s+/).filter(Boolean);
-  return Math.min(parts.length, 5);
+/**
+ * Extracts the ancestor's own class name from a raw `extendsClause` source
+ * string (e.g. "State<MyWidget>" -> "State", "pkg.Base<T>" -> "Base") so it
+ * can be looked up in the project's own class table. Syntax-only — no
+ * import resolution, so a library-prefixed name and an unrelated class of
+ * the same name elsewhere in the project aren't distinguished.
+ */
+function extractBaseClassName(extendsClause: string): string {
+  const withoutGenerics = extendsClause.split('<')[0]?.trim() ?? extendsClause;
+  const segments = withoutGenerics.split('.');
+  return (segments[segments.length - 1] ?? withoutGenerics).trim();
+}
+
+/**
+ * Real recursive walk of a class's own `extends` chain through project-local
+ * ancestors only — stops the moment the chain reaches a class this project
+ * doesn't define itself (Flutter/Dart SDK classes, or any other unresolved
+ * external type), since going further would need real type resolution
+ * (getResolvedUnit()), out of scope for this parsed-level computation.
+ * `cache` memoizes by class name since the same ancestor is often shared by
+ * many subclasses in one project.
+ */
+function inheritanceDepth(
+  className: string,
+  classExtendsByName: ReadonlyMap<string, string | null>,
+  cache: Map<string, number>,
+  visited: Set<string> = new Set(),
+): number {
+  const cached = cache.get(className);
+  if (cached !== undefined) {
+    return cached;
+  }
+  // Dart's `extends` is single-inheritance, so a real cycle can't occur from
+  // valid source — this guard only protects against pathological/malformed
+  // input causing infinite recursion.
+  if (visited.has(className)) {
+    return 0;
+  }
+
+  const extendsClause = classExtendsByName.get(className);
+  if (!extendsClause) {
+    cache.set(className, 0);
+    return 0;
+  }
+
+  const baseName = extractBaseClassName(extendsClause);
+  if (!classExtendsByName.has(baseName)) {
+    // Extends *something*, but it's outside the project (or unresolvable) —
+    // we know there's at least one more level, but can't see past it.
+    cache.set(className, 1);
+    return 1;
+  }
+
+  visited.add(className);
+  const depth = 1 + inheritanceDepth(baseName, classExtendsByName, cache, visited);
+  visited.delete(className);
+  cache.set(className, depth);
+  return depth;
 }
 
 function estimateMethodLength(lines: readonly string[], startIdx: number): number {

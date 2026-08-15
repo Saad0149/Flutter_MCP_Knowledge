@@ -4,10 +4,11 @@ import { OfficialReferenceResolver } from '../official-refs.js';
 import type {
   AnalysisFinding,
   AnalyzerResult,
+  DartFileInfo,
   ProjectAnalysisEngine,
   ProjectSnapshot,
 } from '../types.js';
-import { finding } from './finding-factory.js';
+import { astOrFallback, finding } from './finding-factory.js';
 
 export interface PerformanceFacts {
   readonly largeBuildMethodCount: number;
@@ -55,7 +56,7 @@ export class PerformanceAnalyzer implements ProjectAnalysisEngine<PerformanceFac
       const content = file.content;
       const lines = content.split('\n');
 
-      const build = extractBuildMethodLines(lines);
+      const build = extractLargestBuildMethod(file, lines);
       if (build && build.approxLines > LARGE_BUILD_THRESHOLD) {
         largeBuildMethods.push({ file: file.relativePath, line: build.line, approxLines: build.approxLines });
       }
@@ -82,9 +83,13 @@ export class PerformanceAnalyzer implements ProjectAnalysisEngine<PerformanceFac
         animationControllerWithoutDisposeCount++;
       }
 
-      if (/ListView\(children:\s*\[/.test(content) && !file.relativePath.includes('test/')) {
-        const childCount = (content.match(/ListView\(children:\s*\[/g) ?? []).length;
-        if (childCount > 0) listViewBuilderMisuse += childCount;
+      if (!file.relativePath.includes('test/')) {
+        if (file.astMetrics) {
+          listViewBuilderMisuse += file.astMetrics.listViewEagerCalls.length;
+        } else if (/ListView\(children:\s*\[/.test(content)) {
+          const childCount = (content.match(/ListView\(children:\s*\[/g) ?? []).length;
+          if (childCount > 0) listViewBuilderMisuse += childCount;
+        }
       }
 
       const imgCount = (content.match(/Image\.network\s*\(/g) ?? []).length;
@@ -132,8 +137,13 @@ export class PerformanceAnalyzer implements ProjectAnalysisEngine<PerformanceFac
             recommendedFix: 'Extract sub-trees into named widget classes or const widgets. Keep build() focused on composition.',
             officialReference: this.refs.lookupDoc('build method'),
             source: 'heuristic',
-            confidence: 0.8,
-            basis: 'pattern',
+            dependsOnAst: true,
+            // Real build() body span from the parsed AST's own FunctionBody
+            // offsets when astMetrics is available — a deterministic
+            // structural fact (no brace-matching over text), so this is
+            // near-exact rather than an estimate.
+            confidence: 0.93,
+            basis: astOrFallback(ast),
             scoreImpact: largeBuildMethods.length > 10 ? -15 : -8,
             whyItMatters: 'Large build methods trigger full subtree rebuilds and make performance profiling harder.',
           },
@@ -152,8 +162,9 @@ export class PerformanceAnalyzer implements ProjectAnalysisEngine<PerformanceFac
             evidence: [`libFiles=${libFiles.length}`],
             recommendedFix: null,
             source: 'heuristic',
-            confidence: 0.75,
-            basis: 'pattern',
+            dependsOnAst: true,
+            confidence: 0.88,
+            basis: astOrFallback(ast),
             scoreImpact: 6,
           },
           ast,
@@ -246,8 +257,15 @@ export class PerformanceAnalyzer implements ProjectAnalysisEngine<PerformanceFac
             recommendedFix: 'Use ListView.builder for lists longer than ~10 items. It only renders visible items.',
             officialReference: this.refs.lookupDoc('ListView'),
             source: 'heuristic',
-            confidence: 0.75,
-            basis: 'pattern',
+            dependsOnAst: true,
+            // Real named-argument detection on ListView constructor calls
+            // (both bare `ListView(...)` and explicit `new`/`const`) when
+            // astMetrics is available, correctly excluding `.builder`/
+            // `.separated`. Not higher: no type resolution, so a
+            // project-defined class also named `ListView`, or one reached
+            // through an aliased/prefixed import, isn't distinguished.
+            confidence: 0.88,
+            basis: astOrFallback(ast),
             scoreImpact: -4,
           },
           ast,
@@ -278,6 +296,26 @@ export class PerformanceAnalyzer implements ProjectAnalysisEngine<PerformanceFac
 
     return { engine: this.name, facts, findings, astMeta: ast };
   }
+}
+
+/**
+ * Picks the largest build() method in the file (a file can hold more than
+ * one class/build method). Uses real AST body spans from astMetrics when
+ * available; falls back to brace-matching over text otherwise.
+ */
+function extractLargestBuildMethod(
+  file: DartFileInfo,
+  lines: readonly string[],
+): { readonly line: number; readonly approxLines: number } | null {
+  if (file.astMetrics) {
+    if (file.astMetrics.buildMethods.length === 0) {
+      return null;
+    }
+    return file.astMetrics.buildMethods.reduce((max, b) =>
+      b.approxLines > max.approxLines ? b : max,
+    );
+  }
+  return extractBuildMethodLines(lines);
 }
 
 function extractBuildMethodLines(

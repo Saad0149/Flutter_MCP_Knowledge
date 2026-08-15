@@ -10,8 +10,6 @@ import { toolFail, toolOk, type ToolResult } from './tool-result.js';
 
 export const CheckEnvironmentInputSchema = z.object({});
 
-export type CheckEnvironmentInput = z.infer<typeof CheckEnvironmentInputSchema>;
-
 export interface CheckEnvironmentData {
   readonly dart: {
     readonly found: boolean;

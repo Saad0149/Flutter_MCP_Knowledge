@@ -40,6 +40,7 @@ import { createSqliteKnowledgeStore } from '../../../src/store/sqlite-store.js';
 import { AnalysisSessionStore } from '../../../src/analysis/session/analysis-session-store.js';
 import { AnalyzeArchitectureHandler } from '../../../src/tools/analyze-architecture.js';
 import { ExplainFindingHandler } from '../../../src/tools/explain-finding.js';
+import { ExploreFindingHandler } from '../../../src/tools/explore-finding.js';
 import { ReviewProjectHandler } from '../../../src/tools/review-project.js';
 import { createTempDir, removeTempDir } from '../../helpers/git-fixtures.js';
 import { SilentLogger } from '../../helpers/silent-logger.js';
@@ -456,7 +457,7 @@ describe('Bug 2 & 3 — full pipeline regressions', () => {
       reports,
       logger,
     );
-    return { store, reports, sessions, explanation };
+    return { store, reports, sessions, explanation, recommendations };
   }
 
   /**
@@ -628,6 +629,154 @@ describe('Bug 2 & 3 — full pipeline regressions', () => {
       expect(godClassRisk!.hasEvidence).toBe(true);
       expect(godClassRisk!.sampleFiles.length).toBeGreaterThan(0);
       expect(godClassRisk!.sampleFiles).toContain('lib/core/big_service.dart');
+    }
+
+    store.close();
+  });
+});
+
+/**
+ * Bug 5 — explain_finding vs explore_finding priority disagreement.
+ *
+ * project-report-builder.ts's deriveFindingPriority and
+ * recommendation-engine.ts's derivePriority used to be two independently
+ * implemented formulas over the same inputs (severity/scoreImpact/
+ * confidence) with different "high" thresholds — explore_finding read the
+ * finding's own (narrower-threshold) priority, explain_finding read the
+ * recommendation's (broader-threshold) priority, and the two could disagree
+ * for the same finding in the same session. Confirmed reproducible with a
+ * real DebugPrint finding (confidence 0.95, scoreImpact -4): narrower
+ * threshold (impact >= 8 alone) said 'medium', broader threshold
+ * (impact >= 8 OR confidence >= 0.9) said 'high'. Both tools now read the
+ * same, once-computed `finding.priority` field — this exercises the real
+ * DI-wired tools end to end (not just the unit-level formula) so it would
+ * have caught the actual user-visible disagreement, not just a formula
+ * mismatch in isolation.
+ */
+describe('Bug 5 — explain_finding vs explore_finding priority agreement', () => {
+  let tempDir: string | undefined;
+
+  afterEach(async () => {
+    if (tempDir) {
+      await removeTempDir(tempDir);
+      tempDir = undefined;
+    }
+  });
+
+  function buildStack(storePath: string) {
+    const store = createSqliteKnowledgeStore(storePath);
+    const refs = new OfficialReferenceResolver(store);
+    const logger = new SilentLogger();
+    const ast = new AstAdapter(unavailableDartClient(), new HeuristicSymbolExtractor(), logger);
+    const scanner = new ProjectScanner(ast, new SilentLogger());
+    const codeQuality = new CodeQualityAnalyzer(refs);
+    const stateManagement = new StateManagementAnalyzer(refs);
+    const architecture = new ArchitectureAnalyzer(refs);
+    const complexity = new ComplexityAnalyzer(refs);
+    const testing = new TestingAnalyzer(refs);
+    const dependency = new DependencyAnalyzer(refs);
+    const performance = new PerformanceAnalyzer(refs);
+    const documentation = new DocumentationAnalyzer(refs);
+    const accessibility = new AccessibilityAnalyzer(refs);
+    const metrics = new MetricsEngine();
+    const evidence = new EvidenceEngine();
+    const knowledge = new KnowledgeEngine(store);
+    const relationships = new FindingRelationshipEngine();
+    const scoring = new ScoringEngine();
+    const health = new ProjectHealthScorer(scoring);
+    const recommendations = new RecommendationEngine(knowledge, relationships);
+    const explanation = new ExplanationEngine(recommendations, knowledge, relationships);
+    const debt = new TechnicalDebtEngine();
+    const archMatch = new ArchitectureMatchEngine();
+    const priority = new PriorityActionEngine();
+    const rules = new RuleEngine();
+    const reports = new ProjectReportBuilder(
+      scanner,
+      codeQuality,
+      stateManagement,
+      architecture,
+      metrics,
+      explanation,
+      recommendations,
+      health,
+      rules,
+      evidence,
+      knowledge,
+      relationships,
+      debt,
+      archMatch,
+      priority,
+      complexity,
+      testing,
+      dependency,
+      performance,
+      documentation,
+      accessibility,
+    );
+    const sessions = new AnalysisSessionStore(
+      { repositoriesRoot: tempDir!, indexPath: storePath, indexOnUpdate: false },
+      reports,
+      logger,
+    );
+    return { store, sessions, explanation, recommendations };
+  }
+
+  async function createDebugPrintApp(): Promise<string> {
+    tempDir = await createTempDir('debug-print-priority-');
+    const project = path.join(tempDir, 'app');
+    await mkdir(path.join(project, 'lib'), { recursive: true });
+    await writeFile(
+      path.join(project, 'pubspec.yaml'),
+      `name: debug_print_app\nversion: 1.0.0\nenvironment:\n  sdk: ">=3.0.0 <4.0.0"\ndependencies:\n  flutter:\n    sdk: flutter\n`,
+      'utf8',
+    );
+    await writeFile(
+      path.join(project, 'lib', 'foo.dart'),
+      "class Foo {\n  void bar() {\n    print('hello');\n  }\n}\n",
+      'utf8',
+    );
+    return project;
+  }
+
+  it('explain_finding and explore_finding report the identical priority for the same DebugPrint finding in the same session', async () => {
+    const project = await createDebugPrintApp();
+    const { store, sessions, explanation, recommendations } = buildStack(
+      path.join(tempDir!, 'k.sqlite'),
+    );
+
+    const { session } = await sessions.resolve({ path: project });
+    const debugPrint = session.report.findings.find((f) => f.code === 'DebugPrint');
+    // Sanity: this fixture really does trigger DebugPrint with the exact
+    // confidence/impact combination that used to diverge (impact 4 < 8, but
+    // confidence 0.95 >= 0.9 — only the broader "OR" rule reaches 'high').
+    expect(debugPrint, 'fixture must trigger DebugPrint').toBeDefined();
+    expect(debugPrint!.confidence).toBe(0.95);
+    expect(debugPrint!.scoreImpact).toBe(-4);
+
+    const explainResult = await new ExplainFindingHandler(sessions, explanation).execute({
+      sessionId: session.sessionId,
+      findingCode: 'DebugPrint',
+    });
+    const exploreResult = await new ExploreFindingHandler(sessions, recommendations).execute({
+      sessionId: session.sessionId,
+      findingCode: 'DebugPrint',
+    });
+
+    expect(explainResult.success).toBe(true);
+    expect(exploreResult.success).toBe(true);
+    if (explainResult.success && exploreResult.success) {
+      const explainPriority = (explainResult.data as { priority?: string }).priority;
+      const explorePriority = (
+        exploreResult.data as { finding?: { priority?: string } }
+      ).finding?.priority;
+
+      expect(explainPriority).toBeDefined();
+      expect(explorePriority).toBeDefined();
+      expect(explainPriority).toBe(explorePriority);
+      // Pin the actual reconciled value too, not just "they agree" — both
+      // must land on the broader (union) threshold's answer, 'high', not
+      // silently agree on the narrower 'medium'.
+      expect(explainPriority).toBe('high');
     }
 
     store.close();

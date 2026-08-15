@@ -8,7 +8,7 @@ import type {
   RecommendationDifficulty,
   RecommendationPriority,
 } from '../analysis/index.js';
-import { ExplanationEngine } from '../analysis/index.js';
+import { deriveFindingPriority, ExplanationEngine } from '../analysis/index.js';
 import type { StoredAnalysisSession } from '../analysis/session/analysis-session-store.js';
 import { AnalysisSessionStore } from '../analysis/session/analysis-session-store.js';
 import { TYPES } from '../types/tokens.js';
@@ -247,7 +247,10 @@ export class ExplainFindingHandler {
       relatedFlutterWidgets: explanation.relatedFlutterWidgets,
       relatedApis: explanation.relatedApis,
       relatedFindings: shape.includeRelated ? explanation.relatedFindings : undefined,
-      priority: rec.priority,
+      // Read the finding's own priority directly — same field explore_finding
+      // reads — instead of the recommendation object's (formerly independently
+      // computed) copy, so the two tools can never disagree on this again.
+      priority: match.priority ?? deriveFindingPriority(match),
       confidence: explanation.confidence,
       basis: match.basis,
     };

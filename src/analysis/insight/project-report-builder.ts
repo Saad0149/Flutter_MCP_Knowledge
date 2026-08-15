@@ -42,6 +42,7 @@ import type {
 } from '../types.js';
 import { buildAnalysisSummary } from '../types.js';
 import { ExplanationEngine } from './explanation-engine.js';
+import { deriveFindingPriority } from './finding-priority.js';
 import { PriorityActionEngine } from './priority-action-engine.js';
 import { ProjectHealthScorer } from './project-health-scorer.js';
 import { RecommendationEngine } from './recommendation-engine.js';
@@ -294,29 +295,6 @@ export class ProjectReportBuilder {
       .map((f) => byCode.get(f.code) ?? f)
       .slice(0, limit);
   }
-}
-
-export function deriveFindingPriority(
-  f: AnalysisFinding,
-): NonNullable<AnalysisFinding['priority']> {
-  if (f.severity === 'info' || f.severity === 'positive') return 'info';
-  const impact = Math.abs(f.scoreImpact ?? 0);
-  if (impact >= 12 && f.confidence >= 0.9) {
-    // A finding that can't cite a single file isn't presentable with 'critical'
-    // authority — even at max impact/confidence, it's an aggregate count with
-    // nothing to point an agent or developer at. Runs after evidence
-    // enrichment, so evidenceItems are already populated here.
-    return hasLocatableFileEvidence(f) ? 'critical' : 'high';
-  }
-  if (impact >= 8) return 'high';
-  if (f.severity === 'warning') return 'medium';
-  return 'medium';
-}
-
-/** Same "does this finding have a real file to point at" check sampleFilesFor uses. */
-function hasLocatableFileEvidence(f: AnalysisFinding): boolean {
-  if (f.file) return true;
-  return (f.evidenceItems ?? []).some((item) => Boolean(item.file));
 }
 
 function buildHealthSections(input: {

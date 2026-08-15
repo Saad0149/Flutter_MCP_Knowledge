@@ -17,7 +17,8 @@ import { EvidenceEngine } from '../../../src/analysis/evidence/evidence-engine.j
 import { ExplanationEngine } from '../../../src/analysis/insight/explanation-engine.js';
 import { PriorityActionEngine } from '../../../src/analysis/insight/priority-action-engine.js';
 import { ProjectHealthScorer } from '../../../src/analysis/insight/project-health-scorer.js';
-import { deriveFindingPriority, ProjectReportBuilder } from '../../../src/analysis/insight/project-report-builder.js';
+import { deriveFindingPriority } from '../../../src/analysis/insight/finding-priority.js';
+import { ProjectReportBuilder } from '../../../src/analysis/insight/project-report-builder.js';
 import { RecommendationEngine } from '../../../src/analysis/insight/recommendation-engine.js';
 import { KnowledgeEngine } from '../../../src/analysis/knowledge/knowledge-engine.js';
 import { MetricsEngine } from '../../../src/analysis/metrics/metrics-engine.js';
@@ -109,6 +110,63 @@ describe('deriveFindingPriority — critical requires locatable evidence (unit-l
       file: 'lib/bar.dart',
     });
     expect(deriveFindingPriority(f)).toBe('critical');
+  });
+});
+
+/**
+ * Reconciled 'high' threshold — the union of the two formulas that used to
+ * disagree (project-report-builder.ts's old local deriveFindingPriority,
+ * which only checked impact >= 8, and recommendation-engine.ts's old
+ * derivePriority, which also accepted confidence >= 0.9 alone). See Bug 5
+ * in data-reconciliation-bugs.test.ts for the end-to-end
+ * explain_finding/explore_finding reproduction this unit-level suite backs.
+ */
+describe('deriveFindingPriority — reconciled "high" threshold (impact OR confidence)', () => {
+  it('impact >= 8 alone triggers high, even with low confidence', () => {
+    const f = baseFinding({
+      code: 'HighImpactLowConfidence',
+      category: 'other',
+      severity: 'negative',
+      scoreImpact: -8,
+      confidence: 0.5,
+    });
+    expect(deriveFindingPriority(f)).toBe('high');
+  });
+
+  it('confidence >= 0.9 alone triggers high, even with low impact (the DebugPrint case)', () => {
+    const f = baseFinding({
+      code: 'LowImpactHighConfidence',
+      category: 'other',
+      severity: 'negative',
+      scoreImpact: -4,
+      confidence: 0.95,
+    });
+    expect(deriveFindingPriority(f)).toBe('high');
+  });
+
+  it('neither impact >= 8 nor confidence >= 0.9 does not trigger high', () => {
+    const f = baseFinding({
+      code: 'LowImpactLowConfidence',
+      category: 'other',
+      severity: 'negative',
+      scoreImpact: -4,
+      confidence: 0.7,
+    });
+    const result = deriveFindingPriority(f);
+    expect(result).not.toBe('high');
+    expect(result).not.toBe('critical');
+  });
+
+  it('high impact/confidence together without locatable evidence is capped at high, never critical', () => {
+    const f = baseFinding({
+      code: 'HighBothNoEvidence',
+      category: 'other',
+      severity: 'negative',
+      scoreImpact: -12,
+      confidence: 0.9,
+      evidence: ['count=42'],
+    });
+    expect(deriveFindingPriority(f)).toBe('high');
   });
 });
 

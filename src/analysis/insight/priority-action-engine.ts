@@ -104,11 +104,6 @@ export class PriorityActionEngine {
     for (const def of ACTION_DEFS) {
       const hit = byCode.get(def.code);
       if (!hit) continue;
-      if (hit.severity === 'positive' || hit.severity === 'info') {
-        if (!['NoTests', 'HeavySetState', 'MultipleStateLibraries'].includes(def.code)) {
-          // allow info only for specific action codes that may be warnings
-        }
-      }
       if (hit.severity === 'positive') continue;
 
       ranked.push({

@@ -63,6 +63,7 @@ export { RuleEngine } from './rules/rule-engine.js';
 export type { AnalysisRule } from './rules/rule-engine.js';
 export { registerBuiltinAnalyzers } from './rules/register-builtin.js';
 export { PriorityActionEngine } from './insight/priority-action-engine.js';
+export { deriveFindingPriority } from './insight/finding-priority.js';
 export { ProjectReportBuilder } from './insight/project-report-builder.js';
 export type { ProjectAnalysisReport } from './insight/project-report-builder.js';
 export type { PriorityAction } from './types.js';

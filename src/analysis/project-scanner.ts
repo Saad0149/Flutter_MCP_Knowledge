@@ -161,6 +161,7 @@ export class ProjectScanner {
         imports,
         packageImports,
         relativeImports,
+        astMetrics: null,
       });
 
       for (const imp of relativeImports) {
@@ -181,7 +182,17 @@ export class ProjectScanner {
       }
     }
 
-    const { symbols, astMeta } = await this.astAdapter.extractSymbols(projectPath, dartFiles);
+    const { symbols, astMeta, fileMetrics } = await this.astAdapter.extractSymbols(
+      projectPath,
+      dartFiles,
+    );
+    const dartFilesWithMetrics =
+      fileMetrics.size === 0
+        ? dartFiles
+        : dartFiles.map((f) => {
+            const metrics = fileMetrics.get(f.relativePath);
+            return metrics ? { ...f, astMetrics: metrics } : f;
+          });
 
     return {
       projectPath,
@@ -196,7 +207,7 @@ export class ProjectScanner {
       testExists,
       topLevelDirs,
       libDirs,
-      dartFiles,
+      dartFiles: dartFilesWithMetrics,
       symbols,
       importEdges,
       astMeta,

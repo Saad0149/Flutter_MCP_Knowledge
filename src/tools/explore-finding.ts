@@ -1,7 +1,7 @@
 import { inject, injectable } from 'tsyringe';
 import { z } from 'zod';
 import type { AnalysisFinding, EvidenceItem, OfficialReference } from '../analysis/index.js';
-import { RecommendationEngine } from '../analysis/index.js';
+import { deriveFindingPriority, RecommendationEngine } from '../analysis/index.js';
 import type { StoredAnalysisSession } from '../analysis/session/analysis-session-store.js';
 import { AnalysisSessionStore } from '../analysis/session/analysis-session-store.js';
 import { TYPES } from '../types/tokens.js';
@@ -227,7 +227,10 @@ export class ExploreFindingHandler {
         confidence: match.confidence,
         basis: match.basis,
         description: match.description,
-        priority: match.priority,
+        // Same field (and same fallback) explain_finding reads — see
+        // finding-priority.ts's doc comment for why this is the single
+        // source of truth rather than a per-tool recompute.
+        priority: match.priority ?? deriveFindingPriority(match),
       },
       evidence,
       evidenceOmittedCount,

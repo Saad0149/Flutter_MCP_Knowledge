@@ -32,6 +32,7 @@ describe('CodeQualityAnalyzer god-class / large-class regression fixture', () =>
       imports: [],
       packageImports: [],
       relativeImports: [],
+      astMetrics: null,
       ...overrides,
     };
   }
@@ -187,5 +188,161 @@ describe('CodeQualityAnalyzer god-class / large-class regression fixture', () =>
 
     expect(second.facts.largeClassCandidates.length).toBe(first.facts.largeClassCandidates.length);
     expect(second.facts.godClassDetails.length).toBe(first.facts.godClassDetails.length);
+  });
+
+  it('GodClassCandidate basis is always "pattern" — scoreGodClass() is regex over content regardless of AST availability', () => {
+    // Regression for CONFIDENCE_AUDIT.md's mislabel finding: class
+    // *discovery* uses the real symbol table (astMeta.source ===
+    // 'dart_analyzer' in this fixture), but the god-class *score* itself
+    // (methodCount/fieldCount/importCount/responsibilityHints) is always
+    // regex over raw file content. Previously this finding used
+    // astOrFallback(ast), which incorrectly reported basis: 'ast' here.
+    const analyzer = new CodeQualityAnalyzer(new OfficialReferenceResolver(stubStore));
+    const result = analyzer.analyze(snapshot);
+    const godClassFinding = result.findings.find((f) => f.code === 'GodClassCandidate');
+    expect(godClassFinding).toBeDefined();
+    expect(godClassFinding!.basis).toBe('pattern');
+  });
+});
+
+/**
+ * Regression coverage for CONFIDENCE_AUDIT.md's DeepInheritance finding:
+ * `inheritanceDepthHint()` used to count whitespace-split tokens in a
+ * class's own `extends` clause string — not a measure of inheritance depth
+ * at all. It now recursively walks each class's real `extendsClause`
+ * through the project's own symbol table, stopping at the project boundary
+ * (Flutter/Dart SDK classes, or anything else not defined in this project).
+ */
+describe('CodeQualityAnalyzer DeepInheritance — real chain walk vs. the old token-count bug', () => {
+  function dartFile(relativePath: string): DartFileInfo {
+    return {
+      relativePath,
+      absolutePath: `/fixture/${relativePath}`,
+      lineCount: 1,
+      content: '',
+      imports: [],
+      packageImports: [],
+      relativeImports: [],
+      astMetrics: null,
+    };
+  }
+
+  function classSymbol(
+    name: string,
+    extendsClause: string | null,
+    filePath: string,
+  ): SymbolInfo {
+    return {
+      name,
+      kind: 'class',
+      line: 1,
+      isWidget: false,
+      docstring: null,
+      extendsClause,
+      withClause: null,
+      implementsClause: null,
+      filePath,
+    };
+  }
+
+  const symbols: SymbolInfo[] = [
+    // Old bug — FALSE POSITIVE: a single real extends hop to a generic
+    // base whose type-argument list happens to contain commas/spaces.
+    // Old hint: 'GenericBase<A, B, C>'.split(/\s+/) -> 3 tokens -> "depth 3"
+    // (wrongly >= the threshold). Real depth: Widget extends one thing
+    // (GenericBase, not itself project-local) -> depth 1, correctly NOT deep.
+    classSymbol('CommaGenericWidget', 'GenericBase<A, B, C>', 'lib/comma_generic.dart'),
+
+    // Old bug — FALSE NEGATIVE: a genuine 3-hop project-local chain where
+    // every individual extends clause is a single token (no whitespace),
+    // so the old hint always returned 1 for each class and never flagged
+    // it. Real chain: GrandChild -> Child -> Parent -> StatefulWidget (SDK
+    // boundary), a true depth of 3.
+    classSymbol('GrandChild', 'Child', 'lib/grandchild.dart'),
+    classSymbol('Child', 'Parent', 'lib/child.dart'),
+    classSymbol('Parent', 'StatefulWidget', 'lib/parent.dart'),
+
+    // Shallow, project-local, single hop — must NOT be flagged.
+    classSymbol('ShallowWidget', 'BaseWidget', 'lib/shallow.dart'),
+    classSymbol('BaseWidget', null, 'lib/base_widget.dart'),
+  ];
+
+  const dartFiles: DartFileInfo[] = [
+    dartFile('lib/comma_generic.dart'),
+    dartFile('lib/grandchild.dart'),
+    dartFile('lib/child.dart'),
+    dartFile('lib/parent.dart'),
+    dartFile('lib/shallow.dart'),
+    dartFile('lib/base_widget.dart'),
+  ];
+
+  const snapshot: ProjectSnapshot = {
+    projectPath: '/fixture',
+    hasPubspec: true,
+    pubspecRaw: 'name: fixture\ndependencies:\n  flutter:\n    sdk: flutter\n',
+    packageName: 'fixture',
+    dependencies: ['flutter'],
+    devDependencies: [],
+    isFlutterProject: true,
+    hasAnalysisOptions: true,
+    libExists: true,
+    testExists: false,
+    topLevelDirs: ['lib'],
+    libDirs: ['lib'],
+    dartFiles,
+    symbols,
+    importEdges: [],
+    astMeta: {
+      source: 'dart_analyzer',
+      coverage: 'full',
+      filesAnalyzed: dartFiles.length,
+      filesTotal: dartFiles.length,
+      baseConfidence: 1,
+    },
+  };
+
+  const stubStore = {
+    getSymbolByName: () => null,
+    findDocs: () => [],
+  } as unknown as KnowledgeStore;
+
+  it('does not flag a single real extends hop just because its generic type args contain commas/spaces', () => {
+    const analyzer = new CodeQualityAnalyzer(new OfficialReferenceResolver(stubStore));
+    const result = analyzer.analyze(snapshot);
+    expect(result.facts.deepInheritance.some((d) => d.startsWith('CommaGenericWidget'))).toBe(
+      false,
+    );
+  });
+
+  it('flags a genuine 3-hop project-local chain even though every individual extends clause is a single token', () => {
+    const analyzer = new CodeQualityAnalyzer(new OfficialReferenceResolver(stubStore));
+    const result = analyzer.analyze(snapshot);
+    expect(result.facts.deepInheritance.some((d) => d.startsWith('GrandChild'))).toBe(true);
+    expect(
+      result.facts.deepInheritance.find((d) => d.startsWith('GrandChild')),
+    ).toContain('depth 3');
+  });
+
+  it('does not flag intermediate classes in the chain that individually fall below the threshold', () => {
+    const analyzer = new CodeQualityAnalyzer(new OfficialReferenceResolver(stubStore));
+    const result = analyzer.analyze(snapshot);
+    // Child (depth 2) and Parent (depth 1) must not appear themselves,
+    // even though they're ancestors of the flagged GrandChild.
+    expect(result.facts.deepInheritance.some((d) => d.startsWith('Child extends'))).toBe(false);
+    expect(result.facts.deepInheritance.some((d) => d.startsWith('Parent extends'))).toBe(false);
+  });
+
+  it('does not flag a shallow, single-hop, project-local extends', () => {
+    const analyzer = new CodeQualityAnalyzer(new OfficialReferenceResolver(stubStore));
+    const result = analyzer.analyze(snapshot);
+    expect(result.facts.deepInheritance.some((d) => d.startsWith('ShallowWidget'))).toBe(false);
+  });
+
+  it('DeepInheritance basis follows astOrFallback(ast) — ast here since this fixture has a real symbol table', () => {
+    const analyzer = new CodeQualityAnalyzer(new OfficialReferenceResolver(stubStore));
+    const result = analyzer.analyze(snapshot);
+    const deepInheritanceFinding = result.findings.find((f) => f.code === 'DeepInheritance');
+    expect(deepInheritanceFinding).toBeDefined();
+    expect(deepInheritanceFinding!.basis).toBe('ast');
   });
 });

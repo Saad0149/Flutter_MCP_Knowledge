@@ -3,6 +3,7 @@ import { TYPES } from '../../types/tokens.js';
 import { KnowledgeEngine } from '../knowledge/knowledge-engine.js';
 import { FindingRelationshipEngine } from '../relationships/finding-relationship-engine.js';
 import type { AnalysisFinding, EvidenceItem, OfficialReference } from '../types.js';
+import { deriveFindingPriority } from './finding-priority.js';
 
 export type RecommendationDifficulty = 'low' | 'medium' | 'high';
 export type RecommendationPriority = 'critical' | 'high' | 'medium' | 'low' | 'info';
@@ -69,7 +70,13 @@ export class RecommendationEngine {
       .map((r) => r.code)
       .slice(0, 6);
 
-    const priority = derivePriority(enriched);
+    // Read the finding's own priority — computed exactly once, when the
+    // finding was first produced (project-report-builder.ts's merge step)
+    // — instead of recomputing it here. The `?? deriveFindingPriority(...)`
+    // fallback only matters for a finding that somehow reached this method
+    // without going through that step first; it calls the same single
+    // source of truth, not a second formula.
+    const priority = enriched.priority ?? deriveFindingPriority(enriched);
     const difficulty = deriveDifficulty(enriched);
     const strategy = defaultStrategy(enriched);
 
@@ -101,15 +108,6 @@ export class RecommendationEngine {
       source: enriched.source,
     };
   }
-}
-
-function derivePriority(f: AnalysisFinding): RecommendationPriority {
-  if (f.severity === 'info' || f.severity === 'positive') return 'info';
-  const impact = Math.abs(f.scoreImpact ?? 0);
-  if (impact >= 12 && f.confidence >= 0.9) return 'critical';
-  if (impact >= 8 || f.confidence >= 0.9) return 'high';
-  if (f.severity === 'warning') return 'medium';
-  return 'medium';
 }
 
 function deriveDifficulty(f: AnalysisFinding): RecommendationDifficulty {

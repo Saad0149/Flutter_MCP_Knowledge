@@ -29,26 +29,6 @@ export interface StructuredError {
   readonly details?: unknown;
 }
 
-export type Result<T> =
-  | { readonly ok: true; readonly data: T }
-  | { readonly ok: false; readonly error: StructuredError };
-
-export function ok<T>(data: T): Result<T> {
-  return { ok: true, data };
-}
-
-export function err<T = never>(
-  code: ErrorCode,
-  message: string,
-  details?: unknown,
-): Result<T> {
-  return { ok: false, error: { code, message, details } };
-}
-
-export function fromAppError<T = never>(error: AppError): Result<T> {
-  return err(error.code, error.message, error.details);
-}
-
 export function toStructuredError(error: unknown): StructuredError {
   if (error instanceof AppError) {
     return {

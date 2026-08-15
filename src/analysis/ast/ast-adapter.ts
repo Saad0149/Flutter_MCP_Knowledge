@@ -3,11 +3,13 @@ import type { DartAnalyzerClient } from '../../parser/dart-analyzer-client.js';
 import type { SymbolExtractor } from '../../parser/heuristic-extractor.js';
 import type { Logger } from '../../types/logger.js';
 import { TYPES } from '../../types/tokens.js';
-import type { AstMeta, DartFileInfo, SymbolInfo } from '../types.js';
+import type { AstFileMetrics, AstMeta, DartFileInfo, SymbolInfo } from '../types.js';
 
 export interface AstExtractionResult {
   readonly symbols: readonly SymbolInfo[];
   readonly astMeta: AstMeta;
+  /** Keyed by DartFileInfo.relativePath; empty when the scan fell back to heuristics. */
+  readonly fileMetrics: ReadonlyMap<string, AstFileMetrics>;
 }
 
 /**
@@ -37,6 +39,7 @@ export class AstAdapter {
           filesTotal: 0,
           baseConfidence: 1,
         },
+        fileMetrics: new Map(),
       };
     }
 
@@ -46,6 +49,7 @@ export class AstAdapter {
     if (run.available && run.files.length > 0) {
       const byPath = new Map(run.files.map((f) => [normalizePath(f.path), f]));
       const symbols: SymbolInfo[] = [];
+      const fileMetrics = new Map<string, AstFileMetrics>();
       let filesWithSymbols = 0;
 
       for (const file of dartFiles) {
@@ -66,6 +70,9 @@ export class AstAdapter {
             implementsClause: symbol.implementsClause,
             filePath: file.relativePath,
           });
+        }
+        if (hit.metrics) {
+          fileMetrics.set(file.relativePath, hit.metrics);
         }
       }
 
@@ -92,6 +99,7 @@ export class AstAdapter {
           warning: run.warning,
           baseConfidence: coverage === 'full' ? 1 : coverage === 'partial' ? 0.92 : 0.85,
         },
+        fileMetrics,
       };
     }
 
@@ -129,6 +137,7 @@ export class AstAdapter {
         warning: `${warning} Install the Dart SDK for full-fidelity analysis.`,
         baseConfidence: 0.75,
       },
+      fileMetrics: new Map(),
     };
   }
 }

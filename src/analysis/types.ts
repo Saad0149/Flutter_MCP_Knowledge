@@ -139,6 +139,27 @@ export interface AnalysisSummary {
   readonly averageFindingConfidence: number;
 }
 
+/**
+ * Parsed-level (syntax-only, no getResolvedUnit()) per-file facts computed
+ * by the real Dart AST visitor in parser/bin/extract_symbols.dart — only
+ * present when this file was actually analyzed by the Dart analyzer helper
+ * (null under heuristic fallback, or if this specific file failed to parse
+ * even though the scan overall used the Dart analyzer).
+ */
+export interface AstFileMetrics {
+  /** Decision-point count (if/for/while/do/case/catch/&&/||/ternary) — real AST nodes only. */
+  readonly branchCount: number;
+  /** Max nesting depth of actual control-flow blocks, not brace-depth over the whole file. */
+  readonly maxNestingDepth: number;
+  readonly buildMethods: readonly {
+    readonly line: number;
+    readonly startLine: number;
+    readonly endLine: number;
+    readonly approxLines: number;
+  }[];
+  readonly listViewEagerCalls: readonly { readonly line: number }[];
+}
+
 export interface DartFileInfo {
   readonly relativePath: string;
   readonly absolutePath: string;
@@ -147,6 +168,7 @@ export interface DartFileInfo {
   readonly imports: readonly string[];
   readonly packageImports: readonly string[];
   readonly relativeImports: readonly string[];
+  readonly astMetrics: AstFileMetrics | null;
 }
 
 export interface SymbolInfo {

@@ -220,9 +220,12 @@ ${textLines}
 
     const godClass = result.findings.find((f) => f.code === 'GodClassCandidate');
     expect(godClass, 'fixture must trigger GodClassCandidate').toBeDefined();
-    // Symbol/class-table dependent, and this test harness's AST is unavailable
-    // (falls back to the heuristic extractor) — the actual degraded case.
-    expect(godClass!.basis).toBe('heuristic_fallback');
+    // Class *discovery* uses the symbol table, but scoreGodClass()'s actual
+    // signals (method/field/import counts, responsibility hints) are always
+    // regex over raw content regardless of AST availability — so this is
+    // 'pattern' unconditionally, not AST-availability-dependent. (Previously
+    // mislabeled astOrFallback(ast); see CONFIDENCE_AUDIT.md.)
+    expect(godClass!.basis).toBe('pattern');
 
     const debugPrint = result.findings.find((f) => f.code === 'DebugPrint');
     expect(debugPrint, 'fixture must trigger DebugPrint').toBeDefined();
@@ -280,15 +283,26 @@ ${textLines}
     store.close();
   });
 
-  it('performance findings always use pattern (regex over content)', async () => {
+  it('performance: build()-span/ListView findings fall back when AST is unavailable, other pattern checks do not', async () => {
     const snapshot = await buildSnapshot();
     const storePath = path.join(tempDir!, 'k.sqlite');
     const store = createSqliteKnowledgeStore(storePath);
     const refs = new OfficialReferenceResolver(store);
     const result = await new PerformanceAnalyzer(refs).analyze(snapshot);
-    const finding = result.findings.find((f) => f.code === 'LargeBuildMethod');
-    expect(finding, 'fixture must trigger LargeBuildMethod').toBeDefined();
-    expect(finding!.basis).toBe('pattern');
+
+    const largeBuildMethod = result.findings.find((f) => f.code === 'LargeBuildMethod');
+    expect(largeBuildMethod, 'fixture must trigger LargeBuildMethod').toBeDefined();
+    // Real build() body span comes from astMetrics (extract_symbols.dart's
+    // visitor) when the Dart AST is available; this test harness's AST is
+    // unavailable, so it falls back to brace-matching over text — the
+    // actual degraded case.
+    expect(largeBuildMethod!.basis).toBe('heuristic_fallback');
+
+    const imageCacheHints = result.findings.find((f) => f.code === 'ImageWithoutCacheHints');
+    expect(imageCacheHints, 'fixture must trigger ImageWithoutCacheHints').toBeDefined();
+    // Pure regex-over-content check — unaffected by AST availability.
+    expect(imageCacheHints!.basis).toBe('pattern');
+
     store.close();
   });
 

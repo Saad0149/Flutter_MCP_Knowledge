@@ -15,14 +15,6 @@ export interface BlockedResult {
   readonly suggestedAction: string;
 }
 
-export interface NotFoundResult {
-  readonly status: 'not_found';
-  readonly reason: string;
-  readonly message: string;
-  readonly availableCodes: readonly string[];
-  readonly sessionId: string;
-}
-
 /**
  * Fail-fast guard for the analyze_ family and review_project: rather than
  * running a full analyzer pass over a project with no Dart source (or

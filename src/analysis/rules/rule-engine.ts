@@ -29,12 +29,4 @@ export class RuleEngine {
   list(): readonly AnalysisRule[] {
     return this.rules;
   }
-
-  run(snapshot: ProjectSnapshot): AnalysisFinding[] {
-    const findings: AnalysisFinding[] = [];
-    for (const rule of this.rules) {
-      findings.push(...rule.evaluate(snapshot));
-    }
-    return findings;
-  }
 }
