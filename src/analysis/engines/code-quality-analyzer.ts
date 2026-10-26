@@ -69,6 +69,7 @@ export class CodeQualityAnalyzer implements ProjectAnalysisEngine<CodeQualityFac
       const file = snapshot.dartFiles.find((f) => f.relativePath === c.filePath);
       const loc = file?.lineCount ?? 0;
       if (loc < 400) continue;
+      if (isGeneratedDartFile(file!)) continue;
       largeClassCandidates.push(`${c.name} (${c.filePath}, ${loc} LOC)`);
       const scored = scoreGodClass(c.name, file!);
       if (scored.score >= 70) {
@@ -474,6 +475,14 @@ export class CodeQualityAnalyzer implements ProjectAnalysisEngine<CodeQualityFac
 
     return { engine: this.name, facts, findings, astMeta: ast };
   }
+}
+
+const GENERATED_SUFFIXES = ['.g.dart', '.freezed.dart', '.gr.dart', '.mocks.dart', '.config.dart'];
+
+/** build_runner / codegen output — not hand-written, so never a god/large-class target. */
+function isGeneratedDartFile(file: { readonly relativePath: string; readonly content: string }): boolean {
+  if (GENERATED_SUFFIXES.some((s) => file.relativePath.endsWith(s))) return true;
+  return file.content.slice(0, 1024).includes('GENERATED CODE - DO NOT MODIFY BY HAND');
 }
 
 function scoreGodClass(

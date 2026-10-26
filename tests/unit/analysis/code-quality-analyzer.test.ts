@@ -206,6 +206,160 @@ describe('CodeQualityAnalyzer god-class / large-class regression fixture', () =>
 });
 
 /**
+ * Regression coverage for build_runner / codegen output being flagged as
+ * GodClassCandidate / LargeClassCandidate. Generated files (`*.freezed.dart`,
+ * `*.g.dart`, ... or any file carrying the `GENERATED CODE - DO NOT MODIFY BY
+ * HAND` header) are long and field/method-dense, so they easily cleared the
+ * >=400 LOC and score>=70 bars despite not being hand-written. Each fixture
+ * below uses the exact BigGodService body above (score 75), so only the
+ * generated-file guard decides whether it is flagged.
+ */
+describe('CodeQualityAnalyzer god-class / large-class — generated files are skipped', () => {
+  function dartFile(overrides: Partial<DartFileInfo> & { relativePath: string }): DartFileInfo {
+    return {
+      absolutePath: `/fixture/${overrides.relativePath}`,
+      lineCount: 1,
+      content: '',
+      imports: [],
+      packageImports: [],
+      relativeImports: [],
+      astMetrics: null,
+      ...overrides,
+    };
+  }
+
+  function padLines(lines: string[], targetLineCount: number): string[] {
+    while (lines.length < targetLineCount) {
+      lines.push('// padding');
+    }
+    return lines;
+  }
+
+  function classSymbol(name: string, filePath: string): SymbolInfo {
+    return {
+      name,
+      kind: 'class',
+      line: 1,
+      isWidget: false,
+      docstring: null,
+      extendsClause: null,
+      withClause: null,
+      implementsClause: null,
+      filePath,
+    };
+  }
+
+  // Same body as the BigGodService fixture: score = 25 + 20 + 15 + 15 = 75.
+  const methodLines = Array.from({ length: 20 }, (_, i) => `  void method${i}() {}`);
+  const fieldLines = Array.from({ length: 15 }, (_, i) => `  final int field${i} = ${i};`);
+  const imports = Array.from({ length: 20 }, (_, i) => `package:fixture/dep_${i}.dart`);
+  function godClassLines(className: string, header: string[] = []): string[] {
+    return padLines([...header, `class ${className} {`, ...methodLines, ...fieldLines, '}'], 400);
+  }
+
+  const freezedPath = 'lib/models/user_model.freezed.dart';
+  const headerPath = 'lib/data/api_client_impl.dart';
+  const handWrittenPath = 'lib/services/big_god_service.dart';
+
+  const freezedLines = godClassLines('_$UserModel');
+  const headerLines = godClassLines('ApiClientImpl', ['// GENERATED CODE - DO NOT MODIFY BY HAND']);
+  const handWrittenLines = godClassLines('BigGodService');
+
+  const dartFiles: DartFileInfo[] = [
+    dartFile({
+      relativePath: freezedPath,
+      lineCount: freezedLines.length,
+      content: freezedLines.join('\n'),
+      imports,
+    }),
+    dartFile({
+      relativePath: headerPath,
+      lineCount: headerLines.length,
+      content: headerLines.join('\n'),
+      imports,
+    }),
+    dartFile({
+      relativePath: handWrittenPath,
+      lineCount: handWrittenLines.length,
+      content: handWrittenLines.join('\n'),
+      imports,
+    }),
+  ];
+
+  const symbols: SymbolInfo[] = [
+    classSymbol('_$UserModel', freezedPath),
+    classSymbol('ApiClientImpl', headerPath),
+    classSymbol('BigGodService', handWrittenPath),
+  ];
+
+  const snapshot: ProjectSnapshot = {
+    projectPath: '/fixture',
+    hasPubspec: true,
+    pubspecRaw: 'name: fixture\ndependencies:\n  flutter:\n    sdk: flutter\n',
+    packageName: 'fixture',
+    dependencies: ['flutter'],
+    devDependencies: [],
+    isFlutterProject: true,
+    hasAnalysisOptions: true,
+    libExists: true,
+    testExists: false,
+    topLevelDirs: ['lib'],
+    libDirs: ['lib'],
+    dartFiles,
+    symbols,
+    importEdges: [],
+    astMeta: {
+      source: 'dart_analyzer',
+      coverage: 'full',
+      filesAnalyzed: dartFiles.length,
+      filesTotal: dartFiles.length,
+      baseConfidence: 1,
+    },
+  };
+
+  const stubStore = {
+    getSymbolByName: () => null,
+    findDocs: () => [],
+  } as unknown as KnowledgeStore;
+
+  const analyze = () => new CodeQualityAnalyzer(new OfficialReferenceResolver(stubStore)).analyze(snapshot);
+
+  it('skips a *.freezed.dart file by filename suffix', () => {
+    const result = analyze();
+    expect(result.facts.largeClassCandidates.some((c) => c.includes(freezedPath))).toBe(false);
+    expect(result.facts.godClassDetails.some((g) => g.file === freezedPath)).toBe(false);
+  });
+
+  it('skips a plain-named file carrying the build_runner GENERATED CODE header', () => {
+    const result = analyze();
+    expect(result.facts.largeClassCandidates.some((c) => c.includes(headerPath))).toBe(false);
+    expect(result.facts.godClassDetails.some((g) => g.file === headerPath)).toBe(false);
+  });
+
+  it('still flags the hand-written god class with score 75', () => {
+    const result = analyze();
+
+    // Generated classes still count toward classCount; they are only excluded
+    // from the large/god-class candidate lists.
+    expect(result.facts.classCount).toBe(3);
+
+    expect(result.facts.largeClassCandidates).toHaveLength(1);
+    expect(result.facts.largeClassCandidates[0]?.startsWith('BigGodService')).toBe(true);
+    expect(result.facts.godClassDetails).toHaveLength(1);
+    expect(result.facts.godClassDetails[0]?.name).toBe('BigGodService');
+    expect(result.facts.godClassDetails[0]?.file).toBe(handWrittenPath);
+    expect(result.facts.godClassDetails[0]?.score).toBe(75);
+
+    const godClassFinding = result.findings.find((f) => f.code === 'GodClassCandidate');
+    expect(godClassFinding).toBeDefined();
+    expect(godClassFinding!.evidence).toHaveLength(1);
+    expect(godClassFinding!.evidence.some((e) => e.includes(freezedPath) || e.includes(headerPath))).toBe(
+      false,
+    );
+  });
+});
+
+/**
  * Regression coverage for CONFIDENCE_AUDIT.md's DeepInheritance finding:
  * `inheritanceDepthHint()` used to count whitespace-split tokens in a
  * class's own `extends` clause string — not a measure of inheritance depth
